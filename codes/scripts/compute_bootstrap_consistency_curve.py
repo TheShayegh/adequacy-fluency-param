@@ -24,31 +24,10 @@ import numpy as np
 import pandas as pd
 
 from lib.consistency import load_scorer_inputs, evaluate_scorer_scores, scorer_scores, pool_weighted_tau
-from lib.metametrics import (
-    METAMETRICS, NEEDS_SEGMENT_SCORES, pairwise_p_values, soft_pairwise_accuracy_from_pvalues,
-)
-from lib.metric_scores import (
-    discover_metrics, load_human_seg_scores, load_metric_seg_scores, jointly_valid_columns,
-)
+from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES, soft_pairwise_accuracy_from_pvalues
+from lib.reweighted_consistency import spa_pvalue_cache
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-_MIN_SPA_SEGMENTS = 10
-
-
-def spa_pvalue_cache(dataset: str, systems: list[str], root: str) -> dict:
-  human_seg = load_human_seg_scores(dataset, systems, root=root)
-  out = {}
-  if human_seg is None:
-    return out
-  for name in discover_metrics(dataset, root):
-    metric_seg = load_metric_seg_scores(dataset, name, systems, root=root)
-    if metric_seg is None:
-      continue
-    mask = jointly_valid_columns(human_seg, metric_seg)
-    if mask.sum() < _MIN_SPA_SEGMENTS:
-      continue
-    out[name] = (pairwise_p_values(human_seg[:, mask]), pairwise_p_values(metric_seg[:, mask]))
-  return out
 
 
 if __name__ == '__main__':

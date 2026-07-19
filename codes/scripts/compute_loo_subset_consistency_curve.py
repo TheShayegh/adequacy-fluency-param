@@ -21,34 +21,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from lib.alpha import alpha_min_max, alpha_0 as alpha0_of, build_alpha_grid
 from lib.consistency import real_systems, load_scorer_inputs, scorer_scores
-from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES, pairwise_p_values, soft_pairwise_accuracy_from_pvalues
-from lib.metric_scores import discover_metrics, load_human_seg_scores, load_metric_seg_scores, jointly_valid_columns
+from lib.metametrics import METAMETRICS, METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
 from lib.reweight_exact import solve_w_exact
 from lib.reweight_numeric import solve_w_numeric
+from lib.reweighted_consistency import pooled, rankings_at, spa_pvalue_cache
 from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import METAMETRICS_ORDER, rankings_at, pooled
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
-_MIN_SPA_SEGMENTS = 10
-
-
-def spa_pvalue_cache_for_systems(dataset, systems):
-  """Same role as cross_regime_sign_test.spa_pvalue_cache, but for an
-  explicit system subset instead of a whole dataset's real_systems()."""
-  human_seg = load_human_seg_scores(dataset, systems, root=ROOT)
-  if human_seg is None:
-    return {}
-  out = {}
-  for name in discover_metrics(dataset, ROOT):
-    metric_seg = load_metric_seg_scores(dataset, name, systems, root=ROOT)
-    if metric_seg is None:
-      continue
-    mask = jointly_valid_columns(human_seg, metric_seg)
-    if mask.sum() < _MIN_SPA_SEGMENTS:
-      continue
-    out[name] = (pairwise_p_values(human_seg[:, mask]), pairwise_p_values(metric_seg[:, mask]))
-  return out
 
 
 if __name__ == '__main__':
@@ -132,7 +112,7 @@ if __name__ == '__main__':
     pickle.dump({'datasets': repeat_ids, 'alphas': alphas, 'w_cache': w_cache}, f)
   print(f'wrote {w_cache_path}', file=sys.stderr)
 
-  spa_cache = {rid: spa_pvalue_cache_for_systems(base, systems_by_repeat[rid]) for rid in repeat_ids}
+  spa_cache = {rid: spa_pvalue_cache(base, systems_by_repeat[rid], root=ROOT) for rid in repeat_ids}
 
   for m in METAMETRICS_ORDER:
     inputs_cache = ({rid: load_scorer_inputs(base, m, root=ROOT, systems=systems_by_repeat[rid])

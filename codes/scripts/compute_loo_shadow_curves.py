@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.consistency import real_systems, weighted_consistency
 from lib.metametrics import METAMETRICS
-from lib.reweighted_consistency import weighted_consistency_curve, _spa_pvalue_cache
+from lib.reweighted_consistency import weighted_consistency_curve, spa_pvalue_cache
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -42,7 +42,7 @@ if __name__ == '__main__':
   # Built once per dataset (weighting-independent, action_plan.md 6.5's SPA
   # pairwise p-values), reused across all 6 leave-one-out groups instead of
   # rebuilding per group.
-  spa_cache = {d: _spa_pvalue_cache(d, root=ROOT) for d in datasets}
+  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets}
 
   for excluded in datasets:
     remaining = [d for d in datasets if d != excluded]

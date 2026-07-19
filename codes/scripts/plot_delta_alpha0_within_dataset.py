@@ -38,8 +38,8 @@ from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems
 from lib.metametrics import MetaEvalInput, pearson, spearman, kendall, pairwise_accuracy
 from lib.metric_scores import load_metric_sys_scores
+from lib.reweighted_consistency import pairwise_outcomes
 from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import pairwise_outcomes
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATASETS = ['ende22', 'ende23', 'ende24']

@@ -198,6 +198,11 @@ METAMETRICS = {
     'spa': soft_pairwise_accuracy,
 }
 
+# Canonical presentation/iteration order (plotting, curve computation) --
+# distinct from METAMETRICS' dict (insertion) order only in that this is
+# the one every caller should use rather than each redefining its own copy.
+METAMETRICS_ORDER = ['pearson', 'spearman', 'kendall', 'pa', 'spa']
+
 # Which meta-metrics need segment-level (not just system-level) score data.
 NEEDS_SEGMENT_SCORES = {'spa'}
 

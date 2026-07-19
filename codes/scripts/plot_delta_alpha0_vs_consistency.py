@@ -24,10 +24,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 
+from lib.metametrics import METAMETRICS_ORDER
+
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
 
-METAMETRICS_ORDER = ['pearson', 'spearman', 'kendall', 'pa', 'spa']
 COLORS = {'pearson': '#1f77b4', 'spearman': '#ff7f0e', 'kendall': '#2ca02c',
           'pa': '#d62728', 'spa': '#9467bd'}
 

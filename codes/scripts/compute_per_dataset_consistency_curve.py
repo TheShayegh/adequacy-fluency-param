@@ -22,11 +22,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems, load_scorer_inputs, scorer_scores
 from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES
-from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import rankings_at, spa_pvalue_cache, pooled
+from lib.reweighted_consistency import dataset_alpha_0s, pooled, rankings_at, spa_pvalue_cache
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -45,13 +43,9 @@ if __name__ == '__main__':
   print(f'loaded w_cache: {len(datasets)} datasets x {len(alphas)} alphas', file=sys.stderr)
 
   K = {d: len(real_systems(d, root=ROOT)) for d in datasets}
-  alpha_0 = {}
-  for d in datasets:
-    systems = real_systems(d, root=ROOT)
-    df = load_system_scores(d, root=ROOT).loc[systems]
-    alpha_0[d] = alpha0_of(df['a'].values, df['b'].values)
+  alpha_0 = dataset_alpha_0s(datasets, root=ROOT)
 
-  spa_cache = {d: spa_pvalue_cache(d) for d in datasets}
+  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets}
 
   for metametric in sorted(METAMETRICS):
     t0 = time.time()

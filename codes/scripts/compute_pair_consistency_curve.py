@@ -26,11 +26,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np
 
 from lib.alpha import alpha_min_max, alpha_0 as alpha0_of, build_alpha_grid
-from lib.consistency import real_systems, load_scorer_inputs, evaluate_scorer_scores, scorer_scores
-from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES
+from lib.consistency import real_systems, load_scorer_inputs, scorer_scores
+from lib.metametrics import METAMETRICS, METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
 from lib.reweight_numeric import solve_w_numeric
+from lib.reweighted_consistency import pairwise_outcomes, rankings_at, spa_pvalue_cache
 from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import METAMETRICS_ORDER, rankings_at, spa_pvalue_cache, pairwise_outcomes
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -79,7 +79,7 @@ if __name__ == '__main__':
   n_fail = sum(1 for r in w_cache.values() if not r.success)
   print(f'solved {len(w_cache)} points, {n_fail} still infeasible after retry', file=sys.stderr)
 
-  spa_cache = {d: spa_pvalue_cache(d) for d in datasets}
+  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets}
 
   for m in METAMETRICS_ORDER:
     inputs_cache = ({d: load_scorer_inputs(d, m, root=ROOT) for d in datasets}

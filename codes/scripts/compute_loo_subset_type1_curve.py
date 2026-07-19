@@ -31,10 +31,9 @@ import numpy as np
 
 from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems, load_scorer_inputs, scorer_scores, pool_weighted_tau
-from lib.metametrics import NEEDS_SEGMENT_SCORES
+from lib.metametrics import METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
+from lib.reweighted_consistency import rankings_at, spa_pvalue_cache
 from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import METAMETRICS_ORDER, rankings_at
-from compute_loo_subset_consistency_curve import spa_pvalue_cache_for_systems
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -63,7 +62,7 @@ if __name__ == '__main__':
   # Same repeat_id -> subset convention as compute_loo_subset_consistency_curve.py.
   systems_by_repeat = {f'excl_{s}': [x for x in full_systems if x != s] for s in full_systems}
 
-  spa_cache = {rid: spa_pvalue_cache_for_systems(base, systems_by_repeat[rid]) for rid in repeat_ids}
+  spa_cache = {rid: spa_pvalue_cache(base, systems_by_repeat[rid], root=ROOT) for rid in repeat_ids}
   mean_K = float(np.mean([len(systems_by_repeat[rid]) for rid in repeat_ids]))
 
   # Each repeat's own natural balance computed directly on its |S|=K-1

@@ -20,11 +20,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
 
-from lib.alpha import alpha_0 as alpha0_of
-from lib.consistency import real_systems, load_scorer_inputs, scorer_scores, pool_weighted_tau
+from lib.consistency import load_scorer_inputs, scorer_scores, pool_weighted_tau
 from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES
-from mwb.mqm_scoring import load_system_scores
-from cross_regime_sign_test import rankings_at
+from lib.reweighted_consistency import dataset_alpha_0s, rankings_at, spa_pvalue_cache
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -45,27 +43,10 @@ if __name__ == '__main__':
   systems_by_dataset = cached['systems_by_dataset']
   print(f'{m}: loaded w_cache ({len(datasets)} datasets x {len(alphas)} alphas)', file=sys.stderr)
 
-  # SPA isn't needed for cross_regime_sign_test.rankings_at unless it's
-  # actually requested, but it takes an explicit spa_cache dict either way.
-  spa_cache = {}
-  if m in NEEDS_SEGMENT_SCORES:
-    from lib.metric_scores import discover_metrics, load_human_seg_scores, load_metric_seg_scores, jointly_valid_columns
-    from lib.metametrics import pairwise_p_values
-    _MIN_SPA_SEGMENTS = 10
-    for d in datasets:
-      systems = systems_by_dataset[d]
-      human_seg = load_human_seg_scores(d, systems, root=ROOT)
-      entry = {}
-      if human_seg is not None:
-        for name in discover_metrics(d, ROOT):
-          metric_seg = load_metric_seg_scores(d, name, systems, root=ROOT)
-          if metric_seg is None:
-            continue
-          mask = jointly_valid_columns(human_seg, metric_seg)
-          if mask.sum() < _MIN_SPA_SEGMENTS:
-            continue
-          entry[name] = (pairwise_p_values(human_seg[:, mask]), pairwise_p_values(metric_seg[:, mask]))
-      spa_cache[d] = entry
+  # SPA isn't needed for rankings_at unless it's actually requested, but it
+  # takes an explicit spa_cache dict either way.
+  spa_cache = ({d: spa_pvalue_cache(d, systems_by_dataset[d], root=ROOT) for d in datasets}
+               if m in NEEDS_SEGMENT_SCORES else {})
 
   inputs_cache = ({d: load_scorer_inputs(d, m, root=ROOT, systems=systems_by_dataset[d])
                     for d in datasets} if m not in NEEDS_SEGMENT_SCORES else {})
@@ -86,10 +67,7 @@ if __name__ == '__main__':
   print(f'{m}: baseline (unweighted) tau_bar={baseline_tau_bar:.4f}', file=sys.stderr)
 
   mean_K = float(np.mean([len(systems_by_dataset[d]) for d in datasets]))
-  alpha_0 = {}
-  for d in datasets:
-    sub = load_system_scores(d, root=ROOT).loc[systems_by_dataset[d]]
-    alpha_0[d] = alpha0_of(sub['a'].values, sub['b'].values)
+  alpha_0 = dataset_alpha_0s(datasets, root=ROOT, systems_by_dataset=systems_by_dataset)
 
   out = {
       'metametric': m,

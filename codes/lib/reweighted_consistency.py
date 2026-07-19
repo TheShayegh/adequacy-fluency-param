@@ -8,16 +8,23 @@ numeric-vs-exact distinction lives one level down, inside solve_w_numeric,
 and this module is agnostic to which solver produced its w(alpha) (pass a
 different solve function via `solver` to cross-validate later against the
 exact/support-enumeration solver once it exists).
+
+Also home to the shared pooling machinery (rankings_at/pairwise_outcomes/
+pooled) originally written for cross_regime_sign_test.py's ad hoc analysis
+but reused, as-is, by every subset-consistency script in this family (LOO,
+bootstrap, exclude-system) -- moved here since they're genuinely shared
+infrastructure, not specific to that one experiment.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import itertools
 
 import numpy as np
 import pandas as pd
 
-from lib.alpha import alpha_min_max
+from lib.alpha import alpha_min_max, alpha_0
 from lib.consistency import real_systems, load_scorer_inputs, evaluate_scorer_scores, pool_weighted_tau
 from lib.metametrics import pairwise_p_values, soft_pairwise_accuracy_from_pvalues, NEEDS_SEGMENT_SCORES
 from lib.metric_scores import (
@@ -29,15 +36,37 @@ from mwb.mqm_scoring import load_system_scores
 _MIN_SPA_SEGMENTS = 10  # matches lib.consistency's floor
 
 
-def common_alpha_range(datasets: list[str], root: str = '.') -> tuple[float, float]:
+def dataset_score_arrays(
+    datasets: list[str], root: str = '.', systems_by_dataset: dict[str, list[str]] | None = None,
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+  """(a, b) system-score arrays per dataset, restricted to
+  systems_by_dataset[d] if given (default: real_systems(d)) -- the one I/O
+  step alpha_0/alpha_min_max/grid-building all need."""
+  out = {}
+  for d in datasets:
+    systems = (systems_by_dataset or {}).get(d) or real_systems(d, root=root)
+    df = load_system_scores(d, root=root).loc[systems]
+    out[d] = (df['a'].values, df['b'].values)
+  return out
+
+
+def dataset_alpha_0s(
+    datasets: list[str], root: str = '.', systems_by_dataset: dict[str, list[str]] | None = None,
+) -> dict[str, float]:
+  """Natural (uniform-weight) alpha_0 per dataset, built on
+  dataset_score_arrays."""
+  return {d: alpha_0(a, b) for d, (a, b) in dataset_score_arrays(datasets, root, systems_by_dataset).items()}
+
+
+def common_alpha_range(
+    datasets: list[str], root: str = '.', systems_by_dataset: dict[str, list[str]] | None = None,
+) -> tuple[float, float]:
   """[max_d alpha_min(d), min_d alpha_max(d)] -- the alpha range every
   dataset can be reweighted into *simultaneously* (each dataset's own
   Corollary 2 range intersected across all of them)."""
   los, his = [], []
-  for d in datasets:
-    systems = real_systems(d, root=root)
-    sys_df = load_system_scores(d, root=root).loc[systems]
-    lo, hi = alpha_min_max(sys_df['a'].values, sys_df['b'].values)
+  for a, b in dataset_score_arrays(datasets, root, systems_by_dataset).values():
+    lo, hi = alpha_min_max(a, b)
     los.append(lo)
     his.append(hi)
   return max(los), min(his)
@@ -60,11 +89,15 @@ def solve_w_for_datasets(
   return cache
 
 
-def _spa_pvalue_cache(dataset: str, root: str = '.') -> dict[str, tuple[np.ndarray, np.ndarray]]:
+def spa_pvalue_cache(
+    dataset: str, systems: list[str] | None = None, root: str = '.',
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
   """scorer name -> (human_p, metric_p) pairwise p-value matrices for this
-  dataset, computed once (they don't depend on any system weighting) so
-  the alpha loop only pays for the cheap weighted-average step."""
-  systems = real_systems(dataset, root=root)
+  dataset (or an explicit systems subset, default: real_systems(dataset)),
+  computed once (they don't depend on any system weighting) so the alpha
+  loop only pays for the cheap weighted-average step."""
+  if systems is None:
+    systems = real_systems(dataset, root=root)
   human_seg = load_human_seg_scores(dataset, systems, root=root)
   if human_seg is None:
     return {}
@@ -104,7 +137,7 @@ def weighted_consistency_curve(
   natural baseline.
 
   w_cache/spa_cache: pass the outputs of solve_w_for_datasets /
-  _spa_pvalue_cache (per dataset) to reuse across multiple metametric
+  spa_pvalue_cache (per dataset) to reuse across multiple metametric
   calls instead of recomputing the (expensive) solver / permutation tests
   for each of the 5 meta-metrics separately. Built automatically if
   omitted (costs more if called once per metametric).
@@ -114,7 +147,7 @@ def weighted_consistency_curve(
   needs_seg = metametric_name in NEEDS_SEGMENT_SCORES
   if needs_seg:
     if spa_cache is None:
-      spa_cache = {d: _spa_pvalue_cache(d, root=root) for d in datasets}
+      spa_cache = {d: spa_pvalue_cache(d, root=root) for d in datasets}
   else:
     # Load each dataset's (weighting-independent) scorer inputs once,
     # outside the alpha loop -- avoids re-reading every score file off
@@ -144,3 +177,50 @@ def weighted_consistency_curve(
         ess_by_dataset=ess_by_dataset,
     ))
   return points
+
+
+def rankings_at(metametric, datasets, alpha, w_cache, inputs_cache, spa_cache):
+  """Every dataset's scorer-ranking (pd.Series) at a single alpha, under
+  w_cache[(d, alpha)].w -- the shared per-alpha step both the type-1
+  (pooled) and type-2 (star-pooled) curve computations build on."""
+  if metametric in NEEDS_SEGMENT_SCORES:
+    rankings = {}
+    for d in datasets:
+      w = w_cache[(d, alpha)].w
+      values = {}
+      for name, (hp, mp) in spa_cache[d].items():
+        val = soft_pairwise_accuracy_from_pvalues(hp, mp, w)
+        if val == val:
+          values[name] = val
+      rankings[d] = pd.Series(values, dtype=float)
+    return rankings
+  return {d: evaluate_scorer_scores(inputs_cache[d], metametric, w_cache[(d, alpha)].w) for d in datasets}
+
+
+def pairwise_outcomes(ranking_i: pd.Series, ranking_j: pd.Series) -> list[int]:
+  """+1 (concordant) / -1 (discordant) / 0 (tie) per shared scorer pair --
+  the same tau-a-convention counting as lib.consistency.pool_weighted_tau's
+  inner loop, just returning the raw outcome list instead of a summary."""
+  common = sorted(set(ranking_i.index) & set(ranking_j.index))
+  outcomes = []
+  for x, y in itertools.combinations(common, 2):
+    si = np.sign(ranking_i[x] - ranking_i[y])
+    sj = np.sign(ranking_j[x] - ranking_j[y])
+    outcomes.append(1 if (si != 0 and sj != 0 and si == sj)
+                     else (-1 if (si != 0 and sj != 0) else 0))
+  return outcomes
+
+
+def pooled(pairs, left, right):
+  """pairs: iterable of (key_left, key_right). left/right: dataset -> ranking
+  lookup dicts (may be the same dict for a same-regime/single-pool case, or
+  two different ones -- e.g. lo-side, hi-side -- for a cross-regime pool).
+  Returns (tau_bar, flat_outcomes, per_pair_detail)."""
+  all_outcomes = []
+  per_pair = []
+  for y, yp in pairs:
+    oc = pairwise_outcomes(left[y], right[yp])
+    all_outcomes.extend(oc)
+    per_pair.append((y, yp, len(oc), float(np.mean(oc)) if oc else float('nan')))
+  tau_bar = float(np.mean(all_outcomes)) if all_outcomes else float('nan')
+  return tau_bar, all_outcomes, per_pair

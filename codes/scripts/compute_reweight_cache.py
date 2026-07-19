@@ -29,11 +29,9 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from lib.alpha import alpha_0 as alpha0_of, build_alpha_grid
-from lib.consistency import real_systems
+from lib.alpha import build_alpha_grid
 from lib.dataset_dirs import DATASET_DIRS, datasets_for_years, datasets_for_pair
-from lib.reweighted_consistency import common_alpha_range, solve_w_for_datasets
-from mwb.mqm_scoring import load_system_scores
+from lib.reweighted_consistency import common_alpha_range, dataset_alpha_0s, solve_w_for_datasets
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 
@@ -72,11 +70,7 @@ if __name__ == '__main__':
 
   print(f'datasets ({len(DATASETS)}): {DATASETS}', file=sys.stderr)
   lo, hi = common_alpha_range(DATASETS, root=ROOT)
-  alpha_0 = {}
-  for d in DATASETS:
-    systems = real_systems(d, root=ROOT)
-    sys_df = load_system_scores(d, root=ROOT).loc[systems]
-    alpha_0[d] = alpha0_of(sys_df['a'].values, sys_df['b'].values)
+  alpha_0 = dataset_alpha_0s(DATASETS, root=ROOT)
   alphas, dropped_a0 = build_alpha_grid(lo, hi, args.grid, alpha_0)
   print(f'common alpha range: [{lo:.4f}, {hi:.4f}], grid of {args.grid} '
         f'+ {len(alphas) - args.grid} alpha_0 points = {len(alphas)}, '

@@ -28,25 +28,22 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
-import pandas as pd
 
-from lib.consistency import real_systems, load_scorer_inputs, evaluate_scorer_scores
+from lib.consistency import real_systems, load_scorer_inputs
 from lib.dataset_dirs import datasets_for_pair
-from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES, pairwise_p_values, soft_pairwise_accuracy_from_pvalues
-from lib.metric_scores import discover_metrics, load_human_seg_scores, load_metric_seg_scores, jointly_valid_columns
+from lib.metametrics import METAMETRICS, METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
 from lib.reweight_numeric import solve_w_numeric
+from lib.reweighted_consistency import pooled, rankings_at, spa_pvalue_cache
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
 
-METAMETRICS_ORDER = ['pearson', 'spearman', 'kendall', 'pa', 'spa']
 REGIMES = [('lo', 0.2), ('mid', 0.6), ('hi', 0.9)]
 N_RESTARTS = 30
 RETRY_RESTARTS = 150
 N_BOOT = 2000
 BOOT_SEED = 0
-_MIN_SPA_SEGMENTS = 10
 
 
 def solve_w_cache(datasets, alphas):
@@ -70,67 +67,6 @@ def solve_w_cache(datasets, alphas):
             f'ess={r.ess:.3f}', file=sys.stderr)
       cache[(d, alpha)] = r
   return cache
-
-
-def spa_pvalue_cache(dataset):
-  systems = real_systems(dataset, root=ROOT)
-  human_seg = load_human_seg_scores(dataset, systems, root=ROOT)
-  if human_seg is None:
-    return {}
-  out = {}
-  for name in discover_metrics(dataset, ROOT):
-    metric_seg = load_metric_seg_scores(dataset, name, systems, root=ROOT)
-    if metric_seg is None:
-      continue
-    mask = jointly_valid_columns(human_seg, metric_seg)
-    if mask.sum() < _MIN_SPA_SEGMENTS:
-      continue
-    out[name] = (pairwise_p_values(human_seg[:, mask]), pairwise_p_values(metric_seg[:, mask]))
-  return out
-
-
-def rankings_at(metametric, datasets, alpha, w_cache, inputs_cache, spa_cache):
-  if metametric in NEEDS_SEGMENT_SCORES:
-    rankings = {}
-    for d in datasets:
-      w = w_cache[(d, alpha)].w
-      values = {}
-      for name, (hp, mp) in spa_cache[d].items():
-        val = soft_pairwise_accuracy_from_pvalues(hp, mp, w)
-        if val == val:
-          values[name] = val
-      rankings[d] = pd.Series(values, dtype=float)
-    return rankings
-  return {d: evaluate_scorer_scores(inputs_cache[d], metametric, w_cache[(d, alpha)].w) for d in datasets}
-
-
-def pairwise_outcomes(ranking_i: pd.Series, ranking_j: pd.Series) -> list[int]:
-  """+1 (concordant) / -1 (discordant) / 0 (tie) per shared scorer pair --
-  the same tau-a-convention counting as lib.consistency.pool_weighted_tau's
-  inner loop, just returning the raw outcome list instead of a summary."""
-  common = sorted(set(ranking_i.index) & set(ranking_j.index))
-  outcomes = []
-  for x, y in itertools.combinations(common, 2):
-    si = np.sign(ranking_i[x] - ranking_i[y])
-    sj = np.sign(ranking_j[x] - ranking_j[y])
-    outcomes.append(1 if (si != 0 and sj != 0 and si == sj)
-                     else (-1 if (si != 0 and sj != 0) else 0))
-  return outcomes
-
-
-def pooled(pairs, left, right):
-  """pairs: iterable of (key_left, key_right). left/right: dataset -> ranking
-  lookup functions (may be the same dict for a same-regime pool, or two
-  different ones -- lo-side, hi-side -- for the cross-regime pool). Returns
-  (tau_bar, flat_outcomes, per_pair_detail)."""
-  all_outcomes = []
-  per_pair = []
-  for y, yp in pairs:
-    oc = pairwise_outcomes(left[y], right[yp])
-    all_outcomes.extend(oc)
-    per_pair.append((y, yp, len(oc), float(np.mean(oc)) if oc else float('nan')))
-  tau_bar = float(np.mean(all_outcomes)) if all_outcomes else float('nan')
-  return tau_bar, all_outcomes, per_pair
 
 
 def bootstrap_ci(outcomes: list[int], n_boot=N_BOOT, seed=BOOT_SEED):
@@ -164,7 +100,7 @@ if __name__ == '__main__':
 
   inputs_cache = {m: {d: load_scorer_inputs(d, m, root=ROOT) for d in datasets}
                    for m in METAMETRICS_ORDER if m not in NEEDS_SEGMENT_SCORES}
-  spa_cache = {d: spa_pvalue_cache(d) for d in datasets} if 'spa' in NEEDS_SEGMENT_SCORES else {}
+  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets} if 'spa' in NEEDS_SEGMENT_SCORES else {}
 
   same_pairs = list(itertools.combinations(datasets, 2))            # 15 unordered
   cross_pairs = [(y, yp) for y in datasets for yp in datasets if y != yp]  # 30 ordered

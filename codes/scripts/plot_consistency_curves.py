@@ -28,12 +28,12 @@ from matplotlib.lines import Line2D
 
 from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems
+from lib.metametrics import METAMETRICS_ORDER
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
 
-METAMETRICS_ORDER = ['pearson', 'spearman', 'kendall', 'pa', 'spa']
 TITLES = {
     'pearson': 'Pearson', 'spearman': 'Spearman', 'kendall': "Kendall's $\\tau$",
     'pa': 'Pairwise Accuracy', 'spa': 'Soft Pairwise Accuracy',

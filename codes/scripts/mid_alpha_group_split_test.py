@@ -22,17 +22,15 @@ import numpy as np
 from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems, load_scorer_inputs
 from lib.dataset_dirs import datasets_for_pair
-from lib.metametrics import NEEDS_SEGMENT_SCORES
+from lib.metametrics import METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
 from lib.reweight_numeric import solve_w_numeric
+from lib.reweighted_consistency import pooled, rankings_at
 from mwb.mqm_scoring import load_system_scores
 
 # Reuse the cross-regime script's already-written, already-checked helpers
-# (rankings_at, pairwise_outcomes, pooled, bootstrap_ci) instead of
-# duplicating them.
+# (spa_pvalue_cache, bootstrap_ci) instead of duplicating them.
 sys.path.insert(0, os.path.dirname(__file__))
-from cross_regime_sign_test import (
-    METAMETRICS_ORDER, rankings_at, spa_pvalue_cache, pooled, bootstrap_ci,
-)
+from cross_regime_sign_test import spa_pvalue_cache, bootstrap_ci
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 ALPHA_MID = 0.6
