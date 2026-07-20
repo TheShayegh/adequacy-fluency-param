@@ -12,7 +12,6 @@ Usage: python codes/scripts/compute_per_dataset_consistency_curve.py [--tag TAG]
 """
 
 import argparse
-import itertools
 import json
 import os
 import pickle
@@ -22,9 +21,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from lib.consistency import real_systems, load_scorer_inputs, scorer_scores
-from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES
-from lib.reweighted_consistency import dataset_alpha_0s, pooled, rankings_at, spa_pvalue_cache
+from lib.consistency import real_systems
+from lib.metametrics import METAMETRICS
+from lib.reweighted_consistency import dataset_alpha_0s, star_pooled_consistency_curve
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -45,28 +44,9 @@ if __name__ == '__main__':
   K = {d: len(real_systems(d, root=ROOT)) for d in datasets}
   alpha_0 = dataset_alpha_0s(datasets, root=ROOT)
 
-  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets}
-
   for metametric in sorted(METAMETRICS):
     t0 = time.time()
-    inputs_cache = ({d: load_scorer_inputs(d, metametric, root=ROOT) for d in datasets}
-                     if metametric not in NEEDS_SEGMENT_SCORES else {})
-    rankings_by_alpha = {a: rankings_at(metametric, datasets, a, w_cache, inputs_cache, spa_cache)
-                          for a in alphas}
-    natural_rankings = {d: scorer_scores(d, metametric, root=ROOT) for d in datasets}
-
-    tau_bar_by_dataset = {}
-    ess_by_dataset = {}
-    baseline_tau_by_dataset = {}
-    for d in datasets:
-      others = [dp for dp in datasets if dp != d]
-      tau_bar_by_dataset[d] = [
-          pooled([(d, dp) for dp in others], rankings_by_alpha[a], rankings_by_alpha[a])[0]
-          for a in alphas
-      ]
-      ess_by_dataset[d] = [w_cache[(d, a)].ess for a in alphas]
-      baseline_tau_by_dataset[d] = pooled([(d, dp) for dp in others],
-                                           natural_rankings, natural_rankings)[0]
+    star = star_pooled_consistency_curve(metametric, datasets, alphas, w_cache, root=ROOT)
 
     out = {
         'metametric': metametric,
@@ -74,9 +54,7 @@ if __name__ == '__main__':
         'alphas': alphas,
         'K': K,
         'alpha_0': alpha_0,
-        'tau_bar_by_dataset': tau_bar_by_dataset,
-        'ess_by_dataset': ess_by_dataset,
-        'baseline_tau_by_dataset': baseline_tau_by_dataset,
+        **star,
     }
     out_path = os.path.join(OUT_DIR, f'curve_perdataset_{metametric}{suffix}.json')
     with open(out_path, 'w') as f:

@@ -20,9 +20,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
 
-from lib.consistency import load_scorer_inputs, scorer_scores, pool_weighted_tau
-from lib.metametrics import METAMETRICS, NEEDS_SEGMENT_SCORES
-from lib.reweighted_consistency import dataset_alpha_0s, rankings_at, spa_pvalue_cache
+from lib.consistency import weighted_consistency
+from lib.metametrics import METAMETRICS
+from lib.reweighted_consistency import dataset_alpha_0s, weighted_consistency_curve
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -43,27 +43,13 @@ if __name__ == '__main__':
   systems_by_dataset = cached['systems_by_dataset']
   print(f'{m}: loaded w_cache ({len(datasets)} datasets x {len(alphas)} alphas)', file=sys.stderr)
 
-  # SPA isn't needed for rankings_at unless it's actually requested, but it
-  # takes an explicit spa_cache dict either way.
-  spa_cache = ({d: spa_pvalue_cache(d, systems_by_dataset[d], root=ROOT) for d in datasets}
-               if m in NEEDS_SEGMENT_SCORES else {})
+  points = weighted_consistency_curve(
+      m, datasets, alphas, root=ROOT, w_cache=w_cache, systems_by_dataset=systems_by_dataset)
+  for pt in points:
+    print(f'  alpha={pt.alpha:.4f}  tau_bar={pt.tau_bar:.4f}  mean_ess={pt.mean_ess:.2f}', file=sys.stderr)
 
-  inputs_cache = ({d: load_scorer_inputs(d, m, root=ROOT, systems=systems_by_dataset[d])
-                    for d in datasets} if m not in NEEDS_SEGMENT_SCORES else {})
-
-  points_alpha, points_tau, points_ess, points_ess_by_dataset = [], [], [], []
-  for a in alphas:
-    rankings = rankings_at(m, datasets, a, w_cache, inputs_cache, spa_cache)
-    tau_bar, _, _ = pool_weighted_tau(rankings, datasets)
-    ess_by = {d: w_cache[(d, a)].ess for d in datasets}
-    points_alpha.append(a)
-    points_tau.append(tau_bar)
-    points_ess.append(float(np.mean(list(ess_by.values()))))
-    points_ess_by_dataset.append(ess_by)
-    print(f'  alpha={a:.4f}  tau_bar={tau_bar:.4f}  mean_ess={points_ess[-1]:.2f}', file=sys.stderr)
-
-  natural_rankings = {d: scorer_scores(d, m, root=ROOT, systems=systems_by_dataset[d]) for d in datasets}
-  baseline_tau_bar, _, _ = pool_weighted_tau(natural_rankings, datasets)
+  baseline_tau_bar = weighted_consistency(
+      m, datasets, root=ROOT, systems_by_dataset=systems_by_dataset)['tau_bar']
   print(f'{m}: baseline (unweighted) tau_bar={baseline_tau_bar:.4f}', file=sys.stderr)
 
   mean_K = float(np.mean([len(systems_by_dataset[d]) for d in datasets]))
@@ -72,10 +58,10 @@ if __name__ == '__main__':
   out = {
       'metametric': m,
       'datasets': datasets,
-      'alphas': points_alpha,
-      'tau_bar': points_tau,
-      'mean_ess': points_ess,
-      'ess_by_dataset': points_ess_by_dataset,
+      'alphas': [pt.alpha for pt in points],
+      'tau_bar': [pt.tau_bar for pt in points],
+      'mean_ess': [pt.mean_ess for pt in points],
+      'ess_by_dataset': [pt.ess_by_dataset for pt in points],
       'baseline_tau_bar': baseline_tau_bar,
       'mean_K': mean_K,
       'alpha_0': alpha_0,

@@ -1,13 +1,20 @@
 """M(alpha)-style curves (action_plan.md section 6.1) through the
 cross-dataset consistency metric (section 6.5): re-run lib.consistency's
 pooled weighted-Kendall-tau consistency measure, but with every dataset's
-systems reweighted to a common target alpha via the NUMERIC solver
-(lib.reweight_numeric.solve_w_numeric) instead of their natural (uniform)
-weighting -- so this module's name says "reweighted", not "numeric": the
-numeric-vs-exact distinction lives one level down, inside solve_w_numeric,
-and this module is agnostic to which solver produced its w(alpha) (pass a
-different solve function via `solver` to cross-validate later against the
-exact/support-enumeration solver once it exists).
+systems reweighted to a common target alpha via the EXACT solver
+(lib.reweight_exact.solve_w_exact) instead of their natural (uniform)
+weighting -- so this module's name says "reweighted", not "exact": which
+solver produced w(alpha) lives one level down, and this module is agnostic
+to it (pass a different solve function via `solver` if needed).
+
+This used to default to lib.reweight_numeric.solve_w_numeric (a multi-start
+local optimizer); that module was retired after cross-validation against
+lib.reweight_exhaustive showed it missing the true optimum in 13/15 tested
+cases at its default restart count, sometimes by a large margin (e.g. ESS
+1.07 vs the achievable 4.0) -- lib.reweight_exact has no such risk (a
+certified global optimum every time) and no restart/seed parameters to
+tune, so `solver_kwargs` downstream of this function no longer needs to
+carry n_restarts/seed through to the solver.
 
 Also home to the shared pooling machinery (rankings_at/pairwise_outcomes/
 pooled) originally written for cross_regime_sign_test.py's ad hoc analysis
@@ -25,12 +32,14 @@ import numpy as np
 import pandas as pd
 
 from lib.alpha import alpha_min_max, alpha_0
-from lib.consistency import real_systems, load_scorer_inputs, evaluate_scorer_scores, pool_weighted_tau
+from lib.consistency import (
+    real_systems, load_scorer_inputs, evaluate_scorer_scores, scorer_scores, pool_weighted_tau,
+)
 from lib.metametrics import pairwise_p_values, soft_pairwise_accuracy_from_pvalues, NEEDS_SEGMENT_SCORES
 from lib.metric_scores import (
     discover_metrics, load_human_seg_scores, load_metric_seg_scores, jointly_valid_columns,
 )
-from lib.reweight_numeric import solve_w_numeric
+from lib.reweight_exact import solve_w_exact
 from mwb.mqm_scoring import load_system_scores
 
 _MIN_SPA_SEGMENTS = 10  # matches lib.consistency's floor
@@ -73,17 +82,20 @@ def common_alpha_range(
 
 
 def solve_w_for_datasets(
-    datasets: list[str], alphas, root: str = '.', solver=solve_w_numeric, **solver_kwargs,
+    datasets: list[str], alphas, root: str = '.', solver=solve_w_exact,
+    systems_by_dataset: dict[str, list[str]] | None = None, **solver_kwargs,
 ) -> dict[tuple[str, float], object]:
   """Solves w_d(alpha) once for every (dataset, alpha) pair -- shared
   across all 5 meta-metrics' curves, since the weighting itself doesn't
   depend on which meta-metric will later use it. Returns {(dataset, alpha):
-  NumericWResult}."""
+  ExactWResult}.
+
+  systems_by_dataset: restrict dataset d's systems to systems_by_dataset[d]
+  instead of real_systems(d) -- e.g. a LOO/bootstrap/exclude-system subset
+  of one base dataset, id'd by a synthetic `d` that isn't itself a real
+  WMT dataset key (see dataset_score_arrays)."""
   cache = {}
-  for d in datasets:
-    systems = real_systems(d, root=root)
-    sys_df = load_system_scores(d, root=root).loc[systems]
-    a, b = sys_df['a'].values, sys_df['b'].values
+  for d, (a, b) in dataset_score_arrays(datasets, root, systems_by_dataset).items():
     for alpha in alphas:
       cache[(d, alpha)] = solver(a, b, alpha, **solver_kwargs)
   return cache
@@ -128,6 +140,7 @@ def weighted_consistency_curve(
     root: str = '.',
     w_cache: dict | None = None,
     spa_cache: dict | None = None,
+    systems_by_dataset: dict[str, list[str]] | None = None,
 ) -> list[CurvePoint]:
   """The M(alpha) x consistency curve for one meta-metric: at each alpha,
   reweights every dataset's real systems to that target (via w_cache, or
@@ -141,18 +154,25 @@ def weighted_consistency_curve(
   calls instead of recomputing the (expensive) solver / permutation tests
   for each of the 5 meta-metrics separately. Built automatically if
   omitted (costs more if called once per metametric).
+
+  systems_by_dataset: restrict dataset d's systems to systems_by_dataset[d]
+  instead of real_systems(d) -- see solve_w_for_datasets. Only consulted
+  when w_cache/spa_cache/inputs aren't already supplied (systems only
+  matter at the point of solving/scoring, not once results are cached).
   """
   if w_cache is None:
-    w_cache = solve_w_for_datasets(datasets, alphas, root=root)
+    w_cache = solve_w_for_datasets(datasets, alphas, root=root, systems_by_dataset=systems_by_dataset)
   needs_seg = metametric_name in NEEDS_SEGMENT_SCORES
   if needs_seg:
     if spa_cache is None:
-      spa_cache = {d: spa_pvalue_cache(d, root=root) for d in datasets}
+      spa_cache = {d: spa_pvalue_cache(d, (systems_by_dataset or {}).get(d), root=root) for d in datasets}
   else:
     # Load each dataset's (weighting-independent) scorer inputs once,
     # outside the alpha loop -- avoids re-reading every score file off
     # disk at every grid point (the dominant cost before this caching).
-    inputs_cache = {d: load_scorer_inputs(d, metametric_name, root=root) for d in datasets}
+    inputs_cache = {d: load_scorer_inputs(d, metametric_name, root=root,
+                                            systems=(systems_by_dataset or {}).get(d))
+                     for d in datasets}
 
   points = []
   for alpha in alphas:
@@ -224,3 +244,59 @@ def pooled(pairs, left, right):
     per_pair.append((y, yp, len(oc), float(np.mean(oc)) if oc else float('nan')))
   tau_bar = float(np.mean(all_outcomes)) if all_outcomes else float('nan')
   return tau_bar, all_outcomes, per_pair
+
+
+def star_pooled_consistency_curve(
+    metametric_name: str,
+    datasets: list[str],
+    alphas,
+    w_cache: dict,
+    root: str = '.',
+    spa_cache: dict | None = None,
+    inputs_cache: dict | None = None,
+    systems_by_dataset: dict[str, list[str]] | None = None,
+) -> dict:
+  """Per-dataset star-pooled ("d vs the rest") curve: for each dataset d,
+  pools tau-a between d's ranking and every OTHER dataset's at each alpha,
+  plus d's own natural (unweighted) star-pooled baseline against the same
+  others. Returns {'tau_bar_by_dataset', 'ess_by_dataset',
+  'baseline_tau_by_dataset'}, each keyed by dataset.
+
+  w_cache is required (every caller of this already has one on hand, unlike
+  weighted_consistency_curve which can solve fresh); spa_cache/inputs_cache
+  reuse spa_pvalue_cache/load_scorer_inputs-style caches, built
+  automatically if omitted. systems_by_dataset: see solve_w_for_datasets --
+  only valid when every `d` in `datasets` is itself directly resolvable via
+  load_system_scores(d) (a real dataset name, optionally with a systems
+  subset of ITS OWN roster) -- not for synthetic subset ids of some other
+  base dataset (e.g. LOO/bootstrap repeat ids), which need the caller's own
+  base-dataset + systems-override plumbing instead.
+  """
+  needs_seg = metametric_name in NEEDS_SEGMENT_SCORES
+  if needs_seg:
+    if spa_cache is None:
+      spa_cache = {d: spa_pvalue_cache(d, (systems_by_dataset or {}).get(d), root=root) for d in datasets}
+  elif inputs_cache is None:
+    inputs_cache = {d: load_scorer_inputs(d, metametric_name, root=root,
+                                            systems=(systems_by_dataset or {}).get(d))
+                     for d in datasets}
+  rankings_by_alpha = {a: rankings_at(metametric_name, datasets, a, w_cache, inputs_cache, spa_cache)
+                        for a in alphas}
+  natural_rankings = {d: scorer_scores(d, metametric_name, root=root, systems=(systems_by_dataset or {}).get(d))
+                       for d in datasets}
+
+  tau_bar_by_dataset = {}
+  ess_by_dataset = {}
+  baseline_tau_by_dataset = {}
+  for d in datasets:
+    others = [o for o in datasets if o != d]
+    tau_bar_by_dataset[d] = [pooled([(d, o) for o in others], rankings_by_alpha[a], rankings_by_alpha[a])[0]
+                              for a in alphas]
+    ess_by_dataset[d] = [w_cache[(d, a)].ess for a in alphas]
+    baseline_tau_by_dataset[d] = pooled([(d, o) for o in others], natural_rankings, natural_rankings)[0]
+
+  return {
+      'tau_bar_by_dataset': tau_bar_by_dataset,
+      'ess_by_dataset': ess_by_dataset,
+      'baseline_tau_by_dataset': baseline_tau_by_dataset,
+  }

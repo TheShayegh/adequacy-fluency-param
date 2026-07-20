@@ -19,9 +19,8 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from lib.consistency import load_scorer_inputs, scorer_scores
-from lib.metametrics import METAMETRICS, METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
-from lib.reweighted_consistency import dataset_alpha_0s, pooled, rankings_at, spa_pvalue_cache
+from lib.metametrics import METAMETRICS_ORDER
+from lib.reweighted_consistency import dataset_alpha_0s, star_pooled_consistency_curve
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -43,26 +42,10 @@ if __name__ == '__main__':
   K = {d: len(systems_by_dataset[d]) for d in datasets}
   alpha_0 = dataset_alpha_0s(datasets, root=ROOT, systems_by_dataset=systems_by_dataset)
 
-  spa_cache = {d: spa_pvalue_cache(d, systems_by_dataset[d], root=ROOT) for d in datasets}
-
   for m in METAMETRICS_ORDER:
     t0 = time.time()
-    inputs_cache = ({d: load_scorer_inputs(d, m, root=ROOT, systems=systems_by_dataset[d])
-                      for d in datasets} if m not in NEEDS_SEGMENT_SCORES else {})
-    rankings_by_alpha = {a: rankings_at(m, datasets, a, w_cache, inputs_cache, spa_cache) for a in alphas}
-    natural_rankings = {d: scorer_scores(d, m, root=ROOT, systems=systems_by_dataset[d]) for d in datasets}
-
-    tau_bar_by_dataset = {}
-    ess_by_dataset = {}
-    baseline_tau_by_dataset = {}
-    for d in datasets:
-      others = [o for o in datasets if o != d]
-      tau_bar_by_dataset[d] = [
-          pooled([(d, o) for o in others], rankings_by_alpha[a], rankings_by_alpha[a])[0]
-          for a in alphas
-      ]
-      ess_by_dataset[d] = [w_cache[(d, a)].ess for a in alphas]
-      baseline_tau_by_dataset[d] = pooled([(d, o) for o in others], natural_rankings, natural_rankings)[0]
+    star = star_pooled_consistency_curve(
+        m, datasets, alphas, w_cache, root=ROOT, systems_by_dataset=systems_by_dataset)
 
     out = {
         'metametric': m,
@@ -70,9 +53,7 @@ if __name__ == '__main__':
         'K': K,
         'alpha_0': alpha_0,
         'alphas': list(alphas),
-        'tau_bar_by_dataset': tau_bar_by_dataset,
-        'ess_by_dataset': ess_by_dataset,
-        'baseline_tau_by_dataset': baseline_tau_by_dataset,
+        **star,
     }
     out_path = os.path.join(DATA_DIR, f'curve_perdataset_{m}{suffix}.json')
     with open(out_path, 'w') as f:

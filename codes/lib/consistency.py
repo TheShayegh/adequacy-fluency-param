@@ -44,7 +44,7 @@ def real_systems(dataset: str, root: str = '.') -> list[str]:
   """Sorted real (non-reference/human) system names for a dataset -- the
   canonical ordering scorer_scores() uses internally, and the ordering any
   caller passing an explicit weight vector `w` to scorer_scores must use to
-  build it (e.g. lib.reweight_numeric.solve_w_numeric(a, b, alpha) with a,b
+  build it (e.g. lib.reweight_exact.solve_w_exact(a, b, alpha) with a,b
   built in this same order)."""
   sys_df = load_system_scores(dataset, root=root)
   return sorted(s for s in sys_df.index if not is_reference_or_human(s))
@@ -119,7 +119,7 @@ def scorer_scores(
   real_systems(dataset, root) order if systems is None). None (default)
   uses the unweighted meta-metric (METAMETRICS, equivalent to uniform
   weight); otherwise uses the weighted counterpart (WEIGHTED_METAMETRICS)
-  under that weighting -- e.g. w = lib.reweight_numeric.solve_w_numeric(a,
+  under that weighting -- e.g. w = lib.reweight_exact.solve_w_exact(a,
   b, alpha).w for an M(alpha)-curve point.
 
   One-shot convenience wrapping load_scorer_inputs + evaluate_scorer_
@@ -183,8 +183,16 @@ def pool_weighted_tau(
   return tau_bar, total_den, pair_results
 
 
-def weighted_consistency(metametric_name: str, datasets: list[str], root: str = '.') -> dict:
-  rankings = {d: scorer_scores(d, metametric_name, root=root) for d in datasets}
+def weighted_consistency(
+    metametric_name: str, datasets: list[str], root: str = '.',
+    systems_by_dataset: dict[str, list[str]] | None = None,
+) -> dict:
+  """systems_by_dataset: restrict dataset d's systems to
+  systems_by_dataset[d] instead of real_systems(d) -- e.g. a LOO/
+  bootstrap/exclude-system subset of one base dataset, id'd by a synthetic
+  `d` (see lib.reweighted_consistency.solve_w_for_datasets)."""
+  rankings = {d: scorer_scores(d, metametric_name, root=root, systems=(systems_by_dataset or {}).get(d))
+              for d in datasets}
   tau_bar, total_den, pair_results = pool_weighted_tau(rankings, datasets)
   return {
       'metametric': metametric_name,
