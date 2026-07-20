@@ -1,13 +1,31 @@
 """EXACT (support-enumeration) solver for (P) (action_plan.md section 3,
-specifically 3.9-3.11): unlike lib.reweight_numeric's local-search solver,
-this one is proven both SOUND and COMPLETE -- every value it returns is a
-genuine global optimum of (P), certified either directly (Theorem 2's KKT
-+ curvature sufficiency condition) or, when no support's candidate passes
-that local certificate (the duality-gap case of action_plan.md 3.7), by
-exhaustively enumerating every admissible support's stationary points
-(Corollary 4/5) and returning the min-norm (max-ESS) one among them --
-itself the global optimum by the completeness argument, just without a
-local Theorem-2 witness.
+specifically 3.9-3.11).
+
+(P): given real systems' score vectors a, b and a target balance alpha,
+find the weights w closest to uniform (min 1/2 sum w_i^2) subject to
+sum(w) = 1, w >= 0, and alpha(w) = alpha exactly. (P) is nonconvex (the
+balance constraint is an indefinite quadratic for alpha in (0,1),
+action_plan.md 3.6) -- action_plan.md 3.7 gives a concrete K=4 instance
+where a KKT point is provably NOT globally optimal, i.e. a naive local
+solve is not guaranteed to find the true optimum.
+
+This solver is proven both SOUND and COMPLETE -- every value it returns is
+a genuine global optimum of (P), certified either directly
+(Theorem 2's KKT + curvature sufficiency condition) or, when no support's
+candidate passes that local certificate (the duality-gap case of
+action_plan.md 3.7), by exhaustively enumerating every admissible
+support's stationary points (Corollary 4/5) and returning the min-norm
+(max-ESS) one among them -- itself the global optimum by the completeness
+argument, just without a local Theorem-2 witness.
+
+This is the project's sole production solver for (P). A local-search
+solver (lib.reweight_numeric, multi-start scipy.optimize) previously
+filled this role; it was retired after cross-validation against lib.
+reweight_exhaustive showed it missing the true optimum in 13/15 tested
+real-data cases at its default restart count (sometimes by a large
+margin, e.g. ESS 1.07 vs the achievable 4.0) -- this solver has no such
+risk (a certified global optimum every time) and no restart/seed
+parameters to tune.
 
 This module intentionally does not implement the "descent heuristic"
 priority-ordering optimization of 3.11 (visiting size-|S|-1 supports in an

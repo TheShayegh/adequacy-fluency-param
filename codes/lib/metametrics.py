@@ -15,7 +15,7 @@ score_mqm.py). It needs segment-level scores (both human and metric), unlike
 the other four which only need the system-level vectors.
 
 WEIGHTED variants (weighted_pearson, ..., WEIGHTED_METAMETRICS) apply a
-system-weight vector w (e.g. from lib.reweight_numeric.solve_w_numeric)
+system-weight vector w (e.g. from lib.reweight_exact.solve_w_exact)
 instead of treating every system as equally important -- used to trace
 M(alpha)-style curves (action_plan.md 6.1) through the consistency
 experiment (6.5). Each is the natural weighted generalization of its
