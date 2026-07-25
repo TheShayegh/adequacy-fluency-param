@@ -60,6 +60,7 @@ classify_aspect.
 from __future__ import annotations
 
 import csv
+import functools
 import json
 import os
 import re
@@ -470,10 +471,23 @@ SETS = {
 # for it either.
 
 
+@functools.lru_cache(maxsize=None)
 def _load_seg_df(set_name: str, root: str = '.') -> pd.DataFrame:
   """Shared first step of load_system_scores/load_segment_scores: parses the
   set's per-(system,doc,seg,rater) rows via whichever source (official
-  ratings or raw TSV) load_system_scores() would use for it."""
+  ratings or raw TSV) load_system_scores() would use for it.
+
+  Cached (this is the expensive parse -- raw-TSV sets go through parse_mqm_
+  tsv's per-row weighting/classification, official-ratings sets through
+  load_official_ratings's per-row rating merge): profiling a single 21-alpha
+  curve over just 2 datasets found this step re-invoked 8 times for the same
+  (set_name, root) pairs (real_systems/load_system_scores have no caching of
+  their own and are each called independently by multiple call sites --
+  solve_w_for_datasets, load_scorer_inputs, etc.), accounting for 92% of
+  that run's total wall time. Callers only ever read the returned frame
+  (slice via .loc, groupby, etc., never assign into it in place), so caching
+  the shared object is safe -- verified by checking every load_system_
+  scores/load_segment_scores call site in the project."""
   if set_name in OFFICIAL_RATINGS:
     spec = OFFICIAL_RATINGS[set_name]
     sources_path = os.path.join(root, spec['sources'])

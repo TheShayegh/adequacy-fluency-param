@@ -23,11 +23,6 @@ def is_reference_or_human(system: str) -> bool:
   return bool(_REF_HUMAN_RE.match(system.strip()))
 
 
-def drop_reference_and_human(names) -> list[str]:
-  """Filters an iterable of system names down to real MT systems."""
-  return [n for n in names if not is_reference_or_human(n)]
-
-
 def join_key(system: str) -> str:
   """Case/suffix-insensitive key for matching a system name across
   wmt-mqm-human-evaluation and mt-metrics-eval-v2/metric-scores naming,

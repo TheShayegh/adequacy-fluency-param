@@ -1,8 +1,10 @@
-"""Within-dataset analog of plot_delta_alpha0_vs_consistency.py: instead of
-pairs of different datasets in a year-cluster, takes ONE dataset and pairs
-of its own SUBSETS (every subset with |S| >= K-3 systems, i.e. dropping at
-most 3 systems), then checks the same thing -- does a bigger gap between
-two subsets' own natural balances (delta alpha_0) predict worse natural
+"""Within-dataset analog of the now-removed type-3 (pairwise) consistency
+analysis's own delta-alpha_0 check: instead of pairs of different datasets
+in a year-cluster, takes ONE dataset and pairs of its own SUBSETS (every
+subset with |S| >= K - min_size_drop systems, default dropping at most 3
+systems -- pass --min-size-drop 1 for the leave-ONE-out case, |S| = K-1 or
+K only), then checks the same thing -- does a bigger gap between two
+subsets' own natural balances (delta alpha_0) predict worse natural
 scorer-ranking consistency between them?
 
 All full-K-coverage scorers cover every subset of K automatically (a
@@ -16,8 +18,17 @@ Exhaustive over all pairs below N_PAIRS_MAX; otherwise draws a random
 sample of that many unique pairs instead.
 
 Usage: python codes/scripts/plot_delta_alpha0_within_dataset.py
+           [--datasets ende22,ende23,ende24] [--exclude-system MSLC,IKUN-C]
+           [--min-size-drop 3]
+--exclude-system (comma-separated, optional) is dropped from EVERY listed
+dataset before taking subsets -- e.g. a dataset's own lib.outliers-flagged
+outliers, to see whether the delta-alpha_0 relationship still holds (or
+changes) once they're out of the pool entirely.
 """
 
+from __future__ import annotations
+
+import argparse
 import itertools
 import os
 import random
@@ -42,15 +53,15 @@ from lib.reweighted_consistency import pairwise_outcomes
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-DATASETS = ['ende22', 'ende23', 'ende24']
-MIN_SIZE_DROP = 3  # |S| >= K - MIN_SIZE_DROP
+DEFAULT_DATASETS = ['ende22', 'ende23', 'ende24']
+DEFAULT_MIN_SIZE_DROP = 3  # |S| >= K - min_size_drop; pass --min-size-drop 1 for leave-one-out
 N_PAIRS_MAX = 20000
 SEED = 0
 METAMETRIC_FNS = {'pearson': pearson, 'spearman': spearman, 'kendall': kendall, 'pa': pairwise_accuracy}
 
 
-def prepare(dataset):
-  systems = real_systems(dataset, root=ROOT)
+def prepare(dataset, exclude: list[str] | None = None):
+  systems = [s for s in real_systems(dataset, root=ROOT) if s not in (exclude or [])]
   df = load_system_scores(dataset, root=ROOT).loc[systems]
   scorer_series = load_metric_sys_scores(dataset, systems, root=ROOT)
   scorers = {name: s.reindex(systems).values for name, s in scorer_series.items()}
@@ -73,13 +84,31 @@ def ranking_for_subset(data, idx, metametric_fn, cache):
 
 
 if __name__ == '__main__':
-  rng = random.Random(SEED)
-  fig, axes = plt.subplots(1, len(DATASETS), figsize=(16, 5.5))
+  p = argparse.ArgumentParser()
+  p.add_argument('--datasets', type=str, default=','.join(DEFAULT_DATASETS))
+  p.add_argument('--exclude-system', type=str, default=None,
+                  help='comma-separated, dropped from EVERY listed dataset before taking subsets')
+  p.add_argument('--min-size-drop', type=int, default=DEFAULT_MIN_SIZE_DROP,
+                  help='subsets with |S| >= K - this are included; 1 = leave-one-out (|S| in {K-1, K})')
+  args = p.parse_args()
+  datasets = [d.strip() for d in args.datasets.split(',')]
+  exclude = [s.strip() for s in args.exclude_system.split(',')] if args.exclude_system else None
+  min_size_drop = args.min_size_drop
+  tag_parts = []
+  if exclude:
+    tag_parts.append(f'{"_".join(datasets)}_excl_{"_".join(exclude)}')
+  if min_size_drop != DEFAULT_MIN_SIZE_DROP:
+    tag_parts.append('loo' if min_size_drop == 1 else f'drop{min_size_drop}')
+  tag = f'_{"_".join(tag_parts)}' if tag_parts else ''
 
-  for ax, dataset in zip(axes, DATASETS):
-    data = prepare(dataset)
+  rng = random.Random(SEED)
+  fig, axes = plt.subplots(1, len(datasets), figsize=(max(16 * len(datasets) / 3, 6), 5.5), squeeze=False)
+  axes = axes.flatten()
+
+  for ax, dataset in zip(axes, datasets):
+    data = prepare(dataset, exclude=exclude)
     K = data['K']
-    min_size = K - MIN_SIZE_DROP
+    min_size = K - min_size_drop
     idxs = list(range(K))
     subsets = [c for size in range(min_size, K + 1) for c in itertools.combinations(idxs, size)]
     n_subsets = len(subsets)
@@ -133,11 +162,12 @@ if __name__ == '__main__':
     if ax is axes[0]:
       ax.set_ylabel('Natural consistency\n(mean over pearson/spearman/kendall/pa)')
 
-  fig.suptitle(r'Within-dataset: $\Delta\alpha_0$ between two leave-few-out subsets '
+  subset_kind = 'leave-one-out' if min_size_drop == 1 else 'leave-few-out'
+  fig.suptitle(rf'Within-dataset: $\Delta\alpha_0$ between two {subset_kind} subsets '
                'vs. their natural scorer-ranking consistency\n'
-               '(every subset with $|S|\\geq K-3$; SPA excluded for speed)',
+               rf'(every subset with $|S|\geq K-{min_size_drop}$; SPA excluded for speed)',
                fontsize=13)
   fig.tight_layout(rect=[0, 0, 1, 0.88])
-  out_path = os.path.join(ROOT, 'artifacts', 'delta_alpha0_within_dataset.png')
+  out_path = os.path.join(ROOT, 'artifacts', f'delta_alpha0_within_dataset{tag}.png')
   fig.savefig(out_path, dpi=150, bbox_inches='tight')
   print(f'Wrote {out_path}', file=sys.stderr)

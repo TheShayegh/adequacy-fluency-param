@@ -29,43 +29,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 
-from lib.consistency import real_systems, load_scorer_inputs
+from lib.consistency import load_scorer_inputs
 from lib.dataset_dirs import datasets_for_pair
 from lib.metametrics import METAMETRICS, METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
-from lib.reweight_numeric import solve_w_numeric
-from lib.reweighted_consistency import pooled, rankings_at, spa_pvalue_cache
-from mwb.mqm_scoring import load_system_scores
+from lib.reweighted_consistency import pooled, rankings_at, spa_pvalue_cache, solve_w_for_datasets
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 OUT_DIR = os.path.join(ROOT, 'artifacts', 'data')
 
 REGIMES = [('lo', 0.2), ('mid', 0.6), ('hi', 0.9)]
-N_RESTARTS = 30
-RETRY_RESTARTS = 150
 N_BOOT = 2000
 BOOT_SEED = 0
 
 
 def solve_w_cache(datasets, alphas):
   """w_d(alpha) for alpha in `alphas`, one solve per (dataset, alpha) --
-  retries with more restarts if a first-pass solve is flagged success=False
-  (see sanity_check_realized_alpha.py for why that's needed near the
-  boundary; every regime tested here is comfortably interior for all six
-  en_de datasets, so this is just a safety net, not expected to fire)."""
-  cache = {}
-  for d in datasets:
-    systems = real_systems(d, root=ROOT)
-    sys_df = load_system_scores(d, root=ROOT).loc[systems]
-    a, b = sys_df['a'].values, sys_df['b'].values
-    for alpha in alphas:
-      r = solve_w_numeric(a, b, alpha, n_restarts=N_RESTARTS, seed=0)
-      if not r.success:
-        print(f'  {d} alpha={alpha}: first pass failed, retrying with {RETRY_RESTARTS} restarts',
-              file=sys.stderr)
-        r = solve_w_numeric(a, b, alpha, n_restarts=RETRY_RESTARTS, seed=1)
-      print(f'  {d:10} alpha={alpha:.1f}  success={r.success}  achieved={r.alpha_achieved:.6f}  '
-            f'ess={r.ess:.3f}', file=sys.stderr)
-      cache[(d, alpha)] = r
+  lib.reweight_exact is sound and complete (a certified global optimum
+  every time for an in-range alpha), so no retry/fallback is needed here."""
+  cache = solve_w_for_datasets(datasets, alphas, root=ROOT)
+  for (d, alpha), r in cache.items():
+    print(f'  {d:10} alpha={alpha:.1f}  success={r.success}  achieved={r.alpha_achieved:.6f}  '
+          f'ess={r.ess:.3f}', file=sys.stderr)
   return cache
 
 
@@ -186,7 +170,6 @@ if __name__ == '__main__':
   out = {
       'datasets': datasets,
       'regimes': REGIMES,
-      'n_restarts': N_RESTARTS,
       'n_boot': N_BOOT,
       'w_diagnostics': {
           f'{d}@{alpha}': {'success': w_cache[(d, alpha)].success,

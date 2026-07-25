@@ -343,6 +343,42 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
   if not (alpha_min - tol <= alpha <= alpha_max + tol):
     raise ValueError(f'alpha={alpha} outside reachable range [{alpha_min}, {alpha_max}] (Corollary 2)')
 
+  # Boundary shortcut (Proposition 2's two-system edge case): at alpha ==
+  # alpha_min or alpha_max exactly, no support of size >= 3 can EVER be
+  # admissible -- a non-degenerate support of that size only reaches the
+  # OPEN interval (alpha_min(S), alpha_max(S)), never its own endpoint, let
+  # alone the global one. The search below would still visit (and
+  # correctly reject) every subset of every size from K down to 3 to
+  # discover this, which is pure overhead: _admissible rescans all pairs
+  # per subset, and there are exponentially many subsets in the middle
+  # sizes. Skip straight to the answer when it's unambiguous: on the
+  # segment {w: w_i+w_j=1, w>=0} of a two-system support, alpha(w) is
+  # CONSTANT (Sec 3.3) and 1/2||w||^2 is minimized at the uniform split, so
+  # w=(0.5,0.5) is the unique global optimum whenever a SINGLE pair attains
+  # the extremal value. A tie among >= 2 pairs could in principle be beaten
+  # by a larger all-equal-balance support (Proposition 2's other edge case
+  # -- 3+ systems with proportional centered score vectors), so ties fall
+  # through to the general search, which already handles that case
+  # correctly via largest-first order.
+  if alpha_max - alpha_min > tol:
+    for target in (alpha_min, alpha_max):
+      if abs(alpha - target) > tol:
+        continue
+      tied = [(i, j) for i, j, v in pairs if abs(v - target) <= tol]
+      if len(tied) != 1:
+        break  # ambiguous -- fall through to the general search
+      i, j = tied[0]
+      w = np.zeros(K)
+      w[i] = w[j] = 0.5
+      which = 'alpha_min' if target == alpha_min else 'alpha_max'
+      return ExactWResult(
+          w=w, alpha_target=alpha, alpha_achieved=alpha_of(a, b, w),
+          success=True, certified=True, support=(i, j), phase='anchor',
+          n_supports_visited=1, n_candidates_evaluated=1,
+          objective=0.5 * float(np.sum(w ** 2)), ess=2.0,
+          message=f'boundary shortcut: alpha == {which}, attained uniquely by pair {(i, j)}',
+      )
+
   best = None  # (ess, w, support, eta, phase)
   n_supports_visited = 0
   n_candidates_evaluated = 0

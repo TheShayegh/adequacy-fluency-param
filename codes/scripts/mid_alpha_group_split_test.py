@@ -19,13 +19,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 
-from lib.alpha import alpha_0 as alpha0_of
-from lib.consistency import real_systems, load_scorer_inputs
+from lib.consistency import load_scorer_inputs
 from lib.dataset_dirs import datasets_for_pair
 from lib.metametrics import METAMETRICS_ORDER, NEEDS_SEGMENT_SCORES
-from lib.reweight_numeric import solve_w_numeric
-from lib.reweighted_consistency import pooled, rankings_at
-from mwb.mqm_scoring import load_system_scores
+from lib.reweighted_consistency import pooled, rankings_at, dataset_alpha_0s, solve_w_for_datasets
 
 # Reuse the cross-regime script's already-written, already-checked helpers
 # (spa_pvalue_cache, bootstrap_ci) instead of duplicating them.
@@ -35,17 +32,12 @@ from cross_regime_sign_test import spa_pvalue_cache, bootstrap_ci
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 ALPHA_MID = 0.6
 SPLIT_THRESHOLD = 0.6
-N_RESTARTS = 30
 
 
 if __name__ == '__main__':
   datasets = datasets_for_pair('en-de')
 
-  a0 = {}
-  for d in datasets:
-    systems = real_systems(d, root=ROOT)
-    df = load_system_scores(d, root=ROOT).loc[systems]
-    a0[d] = alpha0_of(df['a'].values, df['b'].values)
+  a0 = dataset_alpha_0s(datasets, root=ROOT)
 
   group_lo = [d for d in datasets if a0[d] < SPLIT_THRESHOLD]
   group_hi = [d for d in datasets if a0[d] >= SPLIT_THRESHOLD]
@@ -56,19 +48,14 @@ if __name__ == '__main__':
   print(f'group_hi (alpha_0 >= {SPLIT_THRESHOLD}): {group_hi}\n', file=sys.stderr)
 
   print(f'Solving w(alpha={ALPHA_MID}) for every dataset...', file=sys.stderr)
-  w_cache = {}
-  for d in datasets:
-    systems = real_systems(d, root=ROOT)
-    df = load_system_scores(d, root=ROOT).loc[systems]
-    a, b = df['a'].values, df['b'].values
-    r = solve_w_numeric(a, b, ALPHA_MID, n_restarts=N_RESTARTS, seed=0)
+  w_cache = solve_w_for_datasets(datasets, [ALPHA_MID], root=ROOT)
+  for (d, _alpha), r in w_cache.items():
     print(f'  {d:10} success={r.success}  achieved={r.alpha_achieved:.6f}  ess={r.ess:.3f}',
           file=sys.stderr)
-    w_cache[(d, ALPHA_MID)] = r
 
   inputs_cache = {m: {d: load_scorer_inputs(d, m, root=ROOT) for d in datasets}
                    for m in METAMETRICS_ORDER if m not in NEEDS_SEGMENT_SCORES}
-  spa_cache = {d: spa_pvalue_cache(d) for d in datasets} if 'spa' in NEEDS_SEGMENT_SCORES else {}
+  spa_cache = {d: spa_pvalue_cache(d, root=ROOT) for d in datasets} if 'spa' in NEEDS_SEGMENT_SCORES else {}
 
   within_lo_pairs = list(itertools.combinations(group_lo, 2))
   within_hi_pairs = list(itertools.combinations(group_hi, 2))

@@ -91,16 +91,13 @@ def pairwise_accuracy(x: MetaEvalInput) -> float:
   human-distinguished pair counts as discordant."""
   h, m = np.asarray(x.human_sys), np.asarray(x.metric_sys)
   K = len(h)
-  concordant = 0
-  total = 0
-  for i in range(K):
-    for j in range(i + 1, K):
-      if h[i] == h[j]:
-        continue
-      total += 1
-      if (h[i] - h[j]) * (m[i] - m[j]) > 0:
-        concordant += 1
-  return concordant / total if total else float('nan')
+  iu, ju = np.triu_indices(K, 1)
+  distinguishable = h[iu] != h[ju]
+  total = int(np.count_nonzero(distinguishable))
+  if total == 0:
+    return float('nan')
+  concordant = int(np.count_nonzero(distinguishable & ((h[iu] - h[ju]) * (m[iu] - m[ju]) > 0)))
+  return concordant / total
 
 
 def pairwise_p_values(seg_scores: np.ndarray, num_permutations: int = 1000, seed: int = 4) -> np.ndarray:
@@ -221,14 +218,17 @@ def weighted_pearson(x: MetaEvalInput, w: np.ndarray) -> float:
 def _weighted_midranks(x: np.ndarray, w: np.ndarray) -> np.ndarray:
   """Weighted analogue of scipy.stats.rankdata's average-tie convention:
   rank_i = (weight strictly below x_i) + half the weight tied with x_i.
-  Reduces to ordinary average ranks at uniform weight."""
+  Reduces to ordinary average ranks at uniform weight.
+
+  Vectorized via one KxK broadcast instead of a per-i boolean-mask loop --
+  row i, column j of each comparison matrix is (x_j < x_i) / (x_j == x_i),
+  matching the original loop's w[x < x[i]]/w[x == x[i]] exactly (including
+  the diagonal, where x[i] == x[i] trivially contributes w[i] to `tied`,
+  same as the original)."""
   x, w = np.asarray(x), np.asarray(w)
-  ranks = np.empty(len(x))
-  for i in range(len(x)):
-    below = w[x < x[i]].sum()
-    tied = w[x == x[i]].sum()
-    ranks[i] = below + 0.5 * tied
-  return ranks
+  below = np.where(x[None, :] < x[:, None], w[None, :], 0.0).sum(axis=1)
+  tied = np.where(x[None, :] == x[:, None], w[None, :], 0.0).sum(axis=1)
+  return below + 0.5 * tied
 
 
 def weighted_spearman(x: MetaEvalInput, w: np.ndarray) -> float:
@@ -246,14 +246,13 @@ def weighted_kendall(x: MetaEvalInput, w: np.ndarray) -> float:
   the scorer-pair-weighted mean equals a single pooled tau)."""
   h, m, w = np.asarray(x.human_sys), np.asarray(x.metric_sys), np.asarray(w)
   K = len(h)
-  num = den = 0.0
-  for i in range(K):
-    for j in range(i + 1, K):
-      wij = w[i] * w[j]
-      den += wij
-      sh, sm = np.sign(h[i] - h[j]), np.sign(m[i] - m[j])
-      if sh != 0 and sm != 0:
-        num += wij if sh == sm else -wij
+  iu, ju = np.triu_indices(K, 1)
+  wij = w[iu] * w[ju]
+  den = float(np.sum(wij))
+  sh = np.sign(h[iu] - h[ju])
+  sm = np.sign(m[iu] - m[ju])
+  untied = (sh != 0) & (sm != 0)
+  num = float(np.sum(np.where(untied, np.where(sh == sm, wij, -wij), 0.0)))
   return num / den if den > 0 else float('nan')
 
 
@@ -262,15 +261,12 @@ def weighted_pairwise_accuracy(x: MetaEvalInput, w: np.ndarray) -> float:
   discordant convention as pairwise_accuracy, aggregated by w_i*w_j."""
   h, m, w = np.asarray(x.human_sys), np.asarray(x.metric_sys), np.asarray(w)
   K = len(h)
-  num = den = 0.0
-  for i in range(K):
-    for j in range(i + 1, K):
-      if h[i] == h[j]:
-        continue
-      wij = w[i] * w[j]
-      den += wij
-      if (h[i] - h[j]) * (m[i] - m[j]) > 0:
-        num += wij
+  iu, ju = np.triu_indices(K, 1)
+  distinguishable = h[iu] != h[ju]
+  wij = w[iu] * w[ju]
+  den = float(np.sum(np.where(distinguishable, wij, 0.0)))
+  concordant = distinguishable & ((h[iu] - h[ju]) * (m[iu] - m[ju]) > 0)
+  num = float(np.sum(np.where(concordant, wij, 0.0)))
   return num / den if den > 0 else float('nan')
 
 

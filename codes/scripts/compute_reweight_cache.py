@@ -1,11 +1,12 @@
-"""Solves w_d(alpha) (NUMERIC solver, lib.reweight_numeric) for every real
-dataset d across a common alpha grid, and caches the result to disk
-(artifacts/data/w_cache[_TAG].pkl). This is the expensive, metametric-
-independent step shared by every curve in compute_consistency_curve.py --
-run once here, reused by that script once per meta-metric so the solver
-never has to run twice for the same (dataset, alpha).
+"""Solves w_d(alpha) (EXACT solver, lib.reweight_exact -- sound and
+complete, no restarts to tune) for every real dataset d across a common
+alpha grid, and caches the result to disk (artifacts/data/
+w_cache[_TAG].pkl). This is the expensive, metametric-independent step
+shared by every curve in compute_consistency_curve.py -- run once here,
+reused by that script once per meta-metric so the solver never has to run
+twice for the same (dataset, alpha).
 
-Usage: python codes/scripts/compute_reweight_cache.py [--grid N] [--restarts N]
+Usage: python codes/scripts/compute_reweight_cache.py [--grid N]
                                                         [--years 2022,2023,2024]
                                                         [--pair en-de]
                                                         [--exclude ted_ende,ted_zhen]
@@ -39,8 +40,6 @@ ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 if __name__ == '__main__':
   p = argparse.ArgumentParser()
   p.add_argument('--grid', type=int, default=21, help='number of alpha grid points')
-  p.add_argument('--restarts', type=int, default=15, help='solve_w_numeric n_restarts')
-  p.add_argument('--seed', type=int, default=42)
   p.add_argument('--years', type=str, default=None,
                   help='comma-separated years, e.g. 2022,2023,2024')
   p.add_argument('--pair', type=str, default=None,
@@ -73,8 +72,7 @@ if __name__ == '__main__':
   alpha_0 = dataset_alpha_0s(DATASETS, root=ROOT)
   alphas, dropped_a0 = build_alpha_grid(lo, hi, args.grid, alpha_0)
   print(f'common alpha range: [{lo:.4f}, {hi:.4f}], grid of {args.grid} '
-        f'+ {len(alphas) - args.grid} alpha_0 points = {len(alphas)}, '
-        f'n_restarts={args.restarts}', file=sys.stderr)
+        f'+ {len(alphas) - args.grid} alpha_0 points = {len(alphas)}', file=sys.stderr)
   if dropped_a0:
     print(f'  ({len(dropped_a0)} alpha_0 outside the common range, not added: {dropped_a0})',
           file=sys.stderr)
@@ -82,7 +80,7 @@ if __name__ == '__main__':
   w_cache = {}
   for i, d in enumerate(DATASETS):
     t0 = time.time()
-    partial = solve_w_for_datasets([d], alphas, root=ROOT, n_restarts=args.restarts, seed=args.seed)
+    partial = solve_w_for_datasets([d], alphas, root=ROOT)
     w_cache.update(partial)
     n_fail = sum(1 for r in partial.values() if not r.success)
     print(f'[{i + 1}/{len(DATASETS)}] {d}: {len(partial)} solves in {time.time() - t0:.1f}s'

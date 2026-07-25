@@ -15,29 +15,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import pandas as pd
 from mwb.mqm_scoring import load_system_scores
+from lib.dataset_dirs import DATASET_DIRS
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 
-# set name -> official .mqm.sys.score path
-OFFICIAL_PATHS = {
-    'ende20': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt20/human-scores/en-de.mqm.sys.score',
-    'zhen20': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt20/human-scores/zh-en.mqm.sys.score',
-    'ende21': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt21.news/human-scores/en-de.mqm.sys.score',
-    'zhen21': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt21.news/human-scores/zh-en.mqm.sys.score',
-    'ted_ende': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt21.tedtalks/human-scores/en-de.mqm.sys.score',
-    'ted_zhen': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt21.tedtalks/human-scores/zh-en.mqm.sys.score',
-    'ende22': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt22/human-scores/en-de.mqm.sys.score',
-    'zhen22': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt22/human-scores/zh-en.mqm.sys.score',
-    'enru22': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt22/human-scores/en-ru.mqm.sys.score',
-    'ende23': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt23/human-scores/en-de.mqm.sys.score',
-    'zhen23': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt23/human-scores/zh-en.mqm.sys.score',
-    'heen23': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt23/human-scores/he-en.mqm.sys.score',
-    'ende24': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt24/human-scores/en-de.mqm.sys.score',
-    'enes24': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt24/human-scores/en-es.mqm.sys.score',
-    'jazh24': 'external/mt-metrics-eval-data/mt-metrics-eval-v2/wmt24/human-scores/ja-zh.mqm.sys.score',
-}
+# set name -> official .mqm.sys.score path, derived from DATASET_DIRS (the
+# shared (year_dir, pair) source of truth) rather than hand-listed -- every
+# one of the 15 sets there has an official file at this same path shape.
 # Not available: generalMT2022/enzh (malformed raw TSV, no official data
-# either -- see extract_labels.py for a sanity check on that set instead).
+# either -- see extract_labels.py for a sanity check on that set instead;
+# it's excluded from DATASET_DIRS for the same reason).
+OFFICIAL_PATHS = {
+    name: f'external/mt-metrics-eval-data/mt-metrics-eval-v2/{year_dir}/human-scores/{pair}.mqm.sys.score'
+    for name, (year_dir, pair) in DATASET_DIRS.items()
+}
 
 # wmt20's sys.score file space-delimits and appends a numeric submission-id
 # suffix to system names (e.g. "Huoshan_Translate.832"); also renames the

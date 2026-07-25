@@ -9,6 +9,7 @@ Usage: python codes/scripts/compute_alpha_table_bootstrap.py [dataset ...]
 (defaults to all 2023/2024 datasets: ende23 zhen23 heen23 ende24 enes24 jazh24)
 """
 
+import argparse
 import os
 import sys
 
@@ -19,7 +20,7 @@ import pandas as pd
 from mwb.mqm_scoring import load_system_scores, load_segment_scores
 from lib.alpha_table import alpha_table_row
 from lib.bootstrap import sample_subsets
-from lib.systems import is_reference_or_human
+from lib.consistency import real_systems
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 
@@ -30,12 +31,11 @@ SEED = 42
 
 
 def run(dataset: str) -> tuple[pd.DataFrame, int]:
-  sys_df = load_system_scores(dataset, root=ROOT)
-  sys_df = sys_df[~sys_df.index.map(is_reference_or_human)]
+  systems = real_systems(dataset, root=ROOT)
+  sys_df = load_system_scores(dataset, root=ROOT).loc[systems]
   seg_df = load_segment_scores(dataset, root=ROOT)
-  seg_df = seg_df[~seg_df['system'].map(is_reference_or_human)]
+  seg_df = seg_df[seg_df['system'].isin(systems)]
 
-  systems = sorted(sys_df.index)
   K = len(systems)
   if K < N_SAMPLE:
     raise ValueError(f'{dataset}: only {K} real systems, need >= {N_SAMPLE}')
@@ -57,7 +57,10 @@ def run(dataset: str) -> tuple[pd.DataFrame, int]:
 
 
 if __name__ == '__main__':
-  datasets = sys.argv[1:] or DEFAULT_DATASETS
+  p = argparse.ArgumentParser()
+  p.add_argument('datasets', nargs='*', default=DEFAULT_DATASETS)
+  args = p.parse_args()
+  datasets = args.datasets
   os.makedirs(os.path.join(ROOT, 'artifacts'), exist_ok=True)
 
   for dataset in datasets:

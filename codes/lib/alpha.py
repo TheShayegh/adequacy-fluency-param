@@ -113,3 +113,35 @@ def build_alpha_grid(
       dropped.append(name)
   alphas = np.unique(np.concatenate([base, extra])) if extra else base
   return alphas, dropped
+
+
+def compute_alpha_ij_grid(
+    a_pool: np.ndarray, b_pool: np.ndarray, subsets: list[tuple[int, ...]], eps_frac: float = 1e-3,
+    trim_frac: float = 0.0,
+) -> tuple[list[float], float, float]:
+  """The shared alpha grid: every pairwise alpha_ij of the FULL pool
+  (a_pool, b_pool), restricted to the range every one of `subsets` can
+  jointly reach (their own Corollary 2 ranges, intersected -- same
+  eps-inset convention as build_alpha_grid, so the exact boundary itself --
+  where only a single degenerate 2-system support is admissible -- is
+  excluded). A subset's own pairwise alphas are always a SUBSET of the full
+  pool's C(K,2) (any pair inside a sampled subset is also a pair of the
+  full pool), so this is well-defined and, by construction, every returned
+  alpha is within every sampled subset's own reachable range too.
+
+  trim_frac additionally shrinks the common range by trim_frac on EACH
+  side (e.g. 1/6 leaves the middle 2/3) before the eps-inset and filter --
+  a cheaper preview knob, independent of eps_frac's boundary-degeneracy
+  exclusion."""
+  los, his = [], []
+  for s in subsets:
+    lo, hi = alpha_min_max(a_pool[list(s)], b_pool[list(s)])
+    los.append(lo)
+    his.append(hi)
+  lo_common, hi_common = max(los), min(his)
+  span = hi_common - lo_common
+  lo_trim, hi_trim = lo_common + trim_frac * span, hi_common - trim_frac * span
+  eps = (hi_trim - lo_trim) * eps_frac
+  alpha_ijs = sorted(set(v for _, _, v in pairwise_alphas(a_pool, b_pool)))
+  grid = [v for v in alpha_ijs if lo_trim + eps <= v <= hi_trim - eps]
+  return grid, lo_trim, hi_trim

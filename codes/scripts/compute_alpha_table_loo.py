@@ -9,6 +9,7 @@ Usage: python codes/scripts/compute_alpha_table_loo.py [dataset]
 (defaults to ende23)
 """
 
+import argparse
 import os
 import sys
 
@@ -18,20 +19,22 @@ import pandas as pd
 
 from mwb.mqm_scoring import load_system_scores, load_segment_scores
 from lib.alpha_table import alpha_table_row
-from lib.systems import is_reference_or_human
+from lib.consistency import real_systems
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 
 
 if __name__ == '__main__':
-  dataset = sys.argv[1] if len(sys.argv) > 1 else 'ende23'
+  p = argparse.ArgumentParser()
+  p.add_argument('dataset', nargs='?', default='ende23')
+  args = p.parse_args()
+  dataset = args.dataset
 
-  sys_df = load_system_scores(dataset, root=ROOT)
-  sys_df = sys_df[~sys_df.index.map(is_reference_or_human)]
+  systems = real_systems(dataset, root=ROOT)
+  sys_df = load_system_scores(dataset, root=ROOT).loc[systems]
   seg_df = load_segment_scores(dataset, root=ROOT)
-  seg_df = seg_df[~seg_df['system'].map(is_reference_or_human)]
+  seg_df = seg_df[seg_df['system'].isin(systems)]
 
-  systems = sorted(sys_df.index)
   K = len(systems)
   print(f'{dataset}: K={K} real systems: {systems}', file=sys.stderr)
 
