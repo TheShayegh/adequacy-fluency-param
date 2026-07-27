@@ -1,4 +1,4 @@
-"""Per-dataset outlier report: flags adequacy-score outliers via lib.
+"""Per-dataset outlier report: flags outliers on a SINGLE RV via lib.
 outliers.mad_outliers (median/MAD-based modified z-score, robust to
 masking -- see that module's docstring), then, for every dataset with
 O >= 1 flagged outliers, draws a histogram of alpha_0 over every C(K,K-O)
@@ -15,7 +15,18 @@ two different combinations landing in the same bin both stay visible
 instead of one overplotting the other. Datasets with O == 0 get no
 histogram (there is nothing to drop).
 
-Usage: python codes/scripts/compute_outlier_report.py [--threshold 3.5]
+SIMPLIFIED, NON-STANDARD: single-pass, single-aspect -- see
+artifacts/inventory_outliers/README.md for the project STANDARD (joint
+(a,b), lib.outlier_detection.iterative_gk_outliers).
+
+--aspect {adequacy,fluency,all} (default adequacy) selects which single RV
+the modified z-score is computed on: adequacy scores (a), fluency scores
+(b), or all_mqm (t = a+b -- still a SINGLE RV, not the joint (a,b) pair).
+The alpha_0 histogram itself always uses both a and b regardless of aspect
+-- only which systems count as outliers changes. Non-default aspects write
+to aspect-tagged filenames so they never clobber the adequacy default.
+
+Usage: python codes/scripts/compute_outlier_report.py [--threshold 3.5] [--aspect adequacy|fluency|all]
 """
 
 from __future__ import annotations
@@ -38,8 +49,11 @@ from lib.outliers import DEFAULT_THRESHOLD, mad_outliers
 from mwb.mqm_scoring import SETS, load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-ARTIFACTS_DIR = os.path.join(ROOT, 'artifacts')
+ARTIFACTS_DIR = os.path.join(ROOT, 'artifacts', 'inventory_outliers')
 DATASETS = list(SETS.keys())
+
+ASPECT_COLUMN = {'adequacy': 'a', 'fluency': 'b', 'all': 't'}
+ASPECT_LABEL = {'adequacy': 'adequacy scores (a)', 'fluency': 'fluency scores (b)', 'all': 'all_mqm (t = a+b)'}
 
 FULL_K_BLACK = (0.0, 0.0, 0.0)  # the full-K alpha_0 reference line
 BAR_ALPHA = 0.5  # histogram bars are translucent; the two dashed reference lines stay solid
@@ -92,6 +106,7 @@ def unit_stacked_hist(ax, groups: list[np.ndarray], bin_edges: np.ndarray,
 
 def plot_dropoutlier_histogram(
     dataset: str, systems: list[str], a: np.ndarray, b: np.ndarray, outlier_names: list[str],
+    filename_suffix: str = '',
 ) -> str:
   """Histogram of alpha_0 over every size-(K-O) subset (O = len(outlier_
   names)) of `systems`, one color per exact combination of outliers a
@@ -148,7 +163,7 @@ def plot_dropoutlier_histogram(
   ax.legend(frameon=False, fontsize=8, loc='center left', bbox_to_anchor=(1.02, 0.5))
 
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-  fname = f'alpha0_subset_histogram_{dataset}_dropoutliers.png'
+  fname = f'alpha0_subset_histogram_{dataset}_dropoutliers{filename_suffix}.png'
   fig.savefig(os.path.join(ARTIFACTS_DIR, fname), dpi=150, bbox_inches='tight')
   plt.close(fig)
   return fname
@@ -157,16 +172,20 @@ def plot_dropoutlier_histogram(
 if __name__ == '__main__':
   p = argparse.ArgumentParser()
   p.add_argument('--threshold', type=float, default=DEFAULT_THRESHOLD)
+  p.add_argument('--aspect', choices=list(ASPECT_COLUMN), default='adequacy',
+                  help='which single RV to modified-z-score: adequacy, fluency, or all (all_mqm = a+b)')
   args = p.parse_args()
+  col = ASPECT_COLUMN[args.aspect]
+  suffix = '' if args.aspect == 'adequacy' else f'_{args.aspect}'
 
   rows = []
   for name in DATASETS:
     systems = real_systems(name, root=ROOT)
     df = load_system_scores(name, root=ROOT).loc[systems]
-    a, b = df['a'].values, df['b'].values
+    a, b, x = df['a'].values, df['b'].values, df[col].values
     K = len(systems)
 
-    flagged = mad_outliers(systems, a, threshold=args.threshold)
+    flagged = mad_outliers(systems, x, threshold=args.threshold)
     O = len(flagged)
     print(f'{name:10} K={K:3d}  O={O}  ' +
           (', '.join(f'{s}(mz={z:.2f})' for s, z in flagged) if flagged else '(none)'),
@@ -175,24 +194,26 @@ if __name__ == '__main__':
     png = None
     if O >= 1 and O < K - 1:
       outlier_names = [s for s, _ in flagged]
-      png = plot_dropoutlier_histogram(name, systems, a, b, outlier_names)
+      png = plot_dropoutlier_histogram(name, systems, a, b, outlier_names, filename_suffix=suffix)
       print(f'  -> {png}', file=sys.stderr)
     elif O >= K - 1:
       print(f'  (O={O} too close to K={K}, skipping histogram: subset size K-O < 2)', file=sys.stderr)
 
     rows.append({'dataset': name, 'K': K, 'O': O, 'flagged': flagged, 'png': png})
 
-  md_path = os.path.join(ARTIFACTS_DIR, 'outlier_report.md')
+  md_path = os.path.join(ARTIFACTS_DIR, f'outlier_report{suffix}.md')
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
   with open(md_path, 'w') as f:
-    f.write('# Per-dataset adequacy-score outlier report\n\n')
+    f.write(f'# Per-dataset outlier report ({ASPECT_LABEL[args.aspect]})\n\n')
     f.write(
-        f'Outliers are flagged via the modified z-score (Iglewicz & Hoya 1993): '
-        f'`0.6745 * (a_i - median(a)) / MAD(a)`, threshold |z| > {args.threshold}. Median/MAD '
+        f'Outliers are flagged via the modified z-score (Iglewicz & Hoya 1993) on '
+        f'{ASPECT_LABEL[args.aspect]}: `0.6745 * (x_i - median(x)) / MAD(x)`, threshold '
+        f'|z| > {args.threshold}. Median/MAD '
         'are robust to the outliers themselves (unlike a plain mean/std z-score or a leave-'
         'one-out variance-drop check), so this catches masked cases where several moderate '
         'outliers together dilute each other\'s individual variance contribution -- see '
-        'lib.outliers.mad_outliers.\n\n'
+        'lib.outliers.mad_outliers. This is a SIMPLIFIED, NON-STANDARD single-RV screen; see '
+        'artifacts/inventory_outliers/README.md for the project STANDARD (joint (a,b)).\n\n'
         'For every dataset with O >= 1 flagged outliers, the histogram below shows alpha_0 '
         '(natural, uniform-weight balance) over every C(K,K-O) subset of size K-O of that '
         'dataset\'s real systems -- exhaustive, not sampled (lib.alpha_table.alpha_0_values_'
@@ -203,7 +224,8 @@ if __name__ == '__main__':
         'group is always red (dashed red line marks that one specific subset); the full-K '
         'alpha_0 is always the dashed black line; every other combination gets its own color '
         'from the rest of the palette. Bars are drawn at alpha=0.5 (the two reference lines '
-        'stay solid).\n\n'
+        'stay solid). Note: alpha_0 itself always uses both a and b -- only the outlier '
+        'FLAGGING criterion changes with --aspect.\n\n'
     )
     f.write('| dataset | K | O | outliers (system: modified z-score) |\n')
     f.write('|---|---|---|---|\n')

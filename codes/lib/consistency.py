@@ -30,6 +30,7 @@ from lib.metric_scores import (
     load_metric_sys_scores, load_human_seg_scores, load_metric_seg_scores,
     jointly_valid_columns,
 )
+from lib.outlier_detection import wmt_official_outliers
 from lib.systems import is_reference_or_human
 from mwb.mqm_scoring import load_system_scores
 
@@ -39,15 +40,62 @@ from mwb.mqm_scoring import load_system_scores
 # SPA in the subset-consistency experiment).
 _MIN_SPA_SEGMENTS = 10
 
+# Datasets missing GRANULAR (line-position-indexed) segment-level Adequacy/
+# Fluency MQM: mwb.mqm_scoring's raw-TSV seg_id for these is a per-document
+# index, not a global line position in the source file, so it cannot be
+# positionally reconciled with automatic-metric segment-score files
+# (lib.spa_plane.positional_af_matrices's self-check found 0.35 correlation
+# for enru22 vs. 0.99+ for every other raw-TSV/official-ratings dataset --
+# i.e. genuinely misaligned, not just noisy). This ONLY breaks analyses that
+# need that positional alignment (currently just the SPA plane's scorer
+# points -- system-level scores and mqm_scoring's own (doc,doc_id,seg_id)-
+# keyed segment matrices are both unaffected), so it is opt-in via
+# real_systems(..., excl_missing_seg_granular_mqm=True) rather than dropped
+# from the plain default the way WMT_OFFICIAL_UNSUPPORTED's 2020 sets are.
+MISSING_SEG_GRANULAR_MQM = frozenset({'enru22'})
 
-def real_systems(dataset: str, root: str = '.') -> list[str]:
+
+def real_systems(
+    dataset: str, root: str = '.', exclude_outliers: bool = True,
+    excl_missing_seg_granular_mqm: bool = False,
+) -> list[str]:
   """Sorted real (non-reference/human) system names for a dataset -- the
   canonical ordering scorer_scores() uses internally, and the ordering any
   caller passing an explicit weight vector `w` to scorer_scores must use to
   build it (e.g. lib.reweight_exact.solve_w_exact(a, b, alpha) with a,b
-  built in this same order)."""
+  built in this same order).
+
+  exclude_outliers (default True): THE PROJECT STANDARD as of this
+  session -- lib.outlier_detection.wmt_official_outliers is now the
+  project's default outlier-removal method, applied here so every caller
+  of real_systems() automatically works on the screened pool without
+  applying any screen itself. This INCLUDES wmt_official's own
+  "unsupported" stance on the 2020 datasets: real_systems('ende20'/
+  'zhen20') now returns an EMPTY list by default, not their raw 7/8-system
+  roster, since none of WMT20's officially-listed outliers exist in this
+  project's smaller raw-TSV 2020 subset to be verified against, so
+  wmt_official cannot certify them clean and drops them entirely rather
+  than silently claiming otherwise. Pass exclude_outliers=False to get the
+  untouched raw roster instead -- needed by, among others, wmt_official_
+  outliers/wmt_non_competative_outliers's own validation (which checks
+  their hardcoded names against a roster that must still contain them)
+  and any "no removal" baseline that needs the genuinely raw pool.
+
+  excl_missing_seg_granular_mqm (default False): pass True to ALSO drop
+  MISSING_SEG_GRANULAR_MQM datasets (currently just enru22) entirely -- for
+  callers that specifically need line-position-aligned segment MQM (e.g.
+  lib.spa_plane's scorer points) and would otherwise silently get a roster
+  they can't use for that purpose. False (the default) leaves enru22 in the
+  pool, since every other analysis in this project has no such need.
+  Bypassed (like exclude_outliers's own drops) by exclude_outliers=False."""
   sys_df = load_system_scores(dataset, root=root)
-  return sorted(s for s in sys_df.index if not is_reference_or_human(s))
+  raw = sorted(s for s in sys_df.index if not is_reference_or_human(s))
+  if not exclude_outliers:
+    return raw
+  if excl_missing_seg_granular_mqm and dataset in MISSING_SEG_GRANULAR_MQM:
+    return []
+  outliers = wmt_official_outliers(dataset, raw)
+  return [s for s in raw if s not in outliers]
 
 
 def load_scorer_inputs(

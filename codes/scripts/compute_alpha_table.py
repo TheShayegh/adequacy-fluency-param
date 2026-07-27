@@ -59,6 +59,13 @@ if __name__ == '__main__':
   std_by_k = {}
   for name in DATASETS:
     systems = real_systems(name, root=ROOT)
+    if not systems:
+      # real_systems() now applies lib.outlier_detection.wmt_official_outliers
+      # by default, which treats some datasets (e.g. ende20/zhen20) as
+      # UNSUPPORTED and drops their entire roster -- skip rather than crash
+      # on alpha_0's 1/K (ZeroDivisionError at K=0).
+      print(f'{name}: SKIPPED (0 systems -- unsupported under wmt_official_outliers)', file=sys.stderr)
+      continue
     sys_df = load_system_scores(name, root=ROOT).loc[systems]
     a = sys_df['a'].values
     b = sys_df['b'].values
@@ -115,6 +122,8 @@ if __name__ == '__main__':
         'lib.alpha_table.alpha_0_by_subset_size.\n\n'
     )
     for name in DATASETS:
+      if name not in std_by_k:
+        continue  # skipped above (0 systems -- unsupported under wmt_official_outliers)
       f.write(f'### {name}\n\n')
       f.write('| k | n_subsets | mean_alpha_0 | std_alpha_0 |\n')
       f.write('|---|---|---|---|\n')

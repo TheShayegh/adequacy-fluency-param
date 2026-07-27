@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems, scorer_scores
-from lib.outlier_detection import iterative_mad_outliers
+from lib.outlier_detection import iterative_single_aspect_outliers
 from lib.reweighted_consistency import pairwise_outcomes
 from mwb.mqm_scoring import load_system_scores
 
@@ -74,7 +74,7 @@ if __name__ == '__main__':
   outliers = []
   if args.drop_outliers:
     a_full = df.loc[raw_systems, 'a'].values
-    outliers = [s for s, _, _ in iterative_mad_outliers(raw_systems, a_full)]
+    outliers = [s for s, _, _ in iterative_single_aspect_outliers(raw_systems, a_full)]
   full_systems = [s for s in raw_systems if s not in set(outliers)]
   K = len(full_systems)
   print(f'D = {base}' + (f' minus {outliers}' if outliers else ' (full)') + f': K={K}', file=sys.stderr)

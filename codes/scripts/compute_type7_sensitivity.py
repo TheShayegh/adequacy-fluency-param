@@ -68,7 +68,7 @@ Usage: python codes/scripts/compute_type7_sensitivity.py
 1 <= B <= A <= K-2 (K = pool size after drops) -- D' (size K-A) needs at
 least 2 systems for its scorer-ranking metametric to be meaningful.
 --drop-outliers (default True): auto-detect and entirely remove this
-dataset's MAD-detected outliers (lib.outlier_detection.iterative_mad_outliers) from the pool
+dataset's MAD-detected outliers (lib.outlier_detection.iterative_single_aspect_outliers) from the pool
 before anything else. Pass --no-drop-outliers to keep them in.
 --drop-leverage-points (default False): after --drop-outliers/--drop-systems,
 run a cheap level-1-style diagnostic pass (natural tau only, no solving) on
@@ -107,7 +107,7 @@ from scipy import stats
 
 from lib.alpha import alpha_0 as alpha0_of
 from lib.consistency import real_systems, scorer_scores
-from lib.outlier_detection import iterative_mad_outliers, studentized_outlier_test
+from lib.outlier_detection import iterative_single_aspect_outliers, studentized_outlier_test
 from lib.reweight_exact import solve_w_exact
 from lib.reweighted_consistency import pairwise_outcomes
 from mwb.mqm_scoring import load_system_scores
@@ -199,7 +199,7 @@ if __name__ == '__main__':
   outliers = []
   if args.drop_outliers:
     a_full = df.loc[raw_systems, 'a'].values
-    outliers = [s for s, _, _ in iterative_mad_outliers(raw_systems, a_full)]
+    outliers = [s for s, _, _ in iterative_single_aspect_outliers(raw_systems, a_full)]
 
   pool_after_outliers = [s for s in raw_systems if s not in set(outliers) | set(manual_drops)]
 
