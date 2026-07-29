@@ -165,46 +165,73 @@ if __name__ == '__main__':
   valid_nats, valid_rws, valid_deltas, valid_ess = [], [], [], []
   done = 0
   log_every = max(1, len(jobs) // 20)
+
+  # Bounded in-flight submission: submitting all jobs to the pool at once
+  # (one Future + dict entry per job, tens of thousands at the largest
+  # levels) was observed to hang indefinitely on the biggest run of this
+  # family (ende24, level 5-2, 87360 jobs) with zero CPU activity and zero
+  # progress after 4+ hours -- looked like a multiprocessing queue/pipe
+  # deadlock from the submission burst itself, not a slow computation (a
+  # slow solve would still show CPU%, this showed none). Capping how many
+  # futures are outstanding at once and topping up as they complete avoids
+  # that burst entirely.
+  max_inflight = max(64, (os.cpu_count() or 4) * 8)
+  job_iter = iter(jobs)
+  futures = {}
   with cf.ProcessPoolExecutor(max_workers=os.cpu_count()) as ex:
-    futures = {ex.submit(_score_one_draw, job): (dpi, ri, cond) for dpi, ri, cond, job in jobs}
-    for fut in cf.as_completed(futures):
-      dpi, ri, cond = futures[fut]
-      sd, ess = fut.result()
-      pending[dpi][(ri, cond)] = (sd, ess)
-      done += 1
+    for _ in range(max_inflight):
+      try:
+        dpi, ri, cond, job = next(job_iter)
+      except StopIteration:
+        break
+      futures[ex.submit(_score_one_draw, job)] = (dpi, ri, cond)
 
-      if len(pending[dpi]) == 2 * n_raters:
-        removed, Dp_systems, a0_Dp = dp_info[dpi]
-        nat_dicts = [pending[dpi][(ri, 'natural')][0] for ri in range(n_raters)]
-        rw_dicts = [pending[dpi][(ri, 'reweighted')][0] for ri in range(n_raters)]
-        rw_ess = [pending[dpi][(ri, 'reweighted')][1] for ri in range(n_raters)]
-        mean_ess_Dp = float(np.mean(rw_ess)) if rw_ess else float('nan')
-        icc_nat = icc_for(nat_dicts)
-        icc_rw = icc_for(rw_dicts)
-        delta = icc_rw - icc_nat if (icc_nat == icc_nat and icc_rw == icc_rw) else float('nan')
-        row_text[dpi] = row_line(','.join(sorted(removed)), a0_Dp, icc_nat, icc_rw, delta, mean_ess_Dp)
-        if icc_nat == icc_nat and icc_rw == icc_rw:
-          valid_nats.append(icc_nat)
-          valid_rws.append(icc_rw)
-          valid_deltas.append(delta)
-          valid_ess.append(mean_ess_Dp)
-        pending[dpi] = None  # free memory -- this D' is done
+    while futures:
+      done_set, _ = cf.wait(futures, return_when=cf.FIRST_COMPLETED)
+      for fut in done_set:
+        dpi, ri, cond = futures.pop(fut)
+        sd, ess = fut.result()
+        pending[dpi][(ri, cond)] = (sd, ess)
+        done += 1
 
-        # Rewrite: header + every completed row so far + current summary.
-        with open(out_path, 'w') as f:
-          f.write('\n'.join(header_lines) + '\n')
-          for rt in row_text:
-            if rt is not None:
-              f.write(rt + '\n')
-          f.write(summary_line(valid_deltas, valid_nats, valid_rws, valid_ess, n_Dp) + '\n')
+        try:
+          ndpi, nri, ncond, njob = next(job_iter)
+          futures[ex.submit(_score_one_draw, njob)] = (ndpi, nri, ncond)
+        except StopIteration:
+          pass
 
-      if done % log_every == 0:
-        elapsed = time.time() - t0
-        rate = done / elapsed if elapsed > 0 else 0.0
-        remaining_s = (len(jobs) - done) / rate if rate > 0 else float('nan')
-        n_rows_done = sum(1 for rt in row_text if rt is not None)
-        print(f'  [{done}/{len(jobs)} jobs, {n_rows_done}/{n_Dp} D\' rows] '
-              f'elapsed={elapsed:.1f}s est.remaining={remaining_s:.1f}s', file=sys.stderr, flush=True)
+        if len(pending[dpi]) == 2 * n_raters:
+          removed, Dp_systems, a0_Dp = dp_info[dpi]
+          nat_dicts = [pending[dpi][(ri, 'natural')][0] for ri in range(n_raters)]
+          rw_dicts = [pending[dpi][(ri, 'reweighted')][0] for ri in range(n_raters)]
+          rw_ess = [pending[dpi][(ri, 'reweighted')][1] for ri in range(n_raters)]
+          mean_ess_Dp = float(np.mean(rw_ess)) if rw_ess else float('nan')
+          icc_nat = icc_for(nat_dicts)
+          icc_rw = icc_for(rw_dicts)
+          delta = icc_rw - icc_nat if (icc_nat == icc_nat and icc_rw == icc_rw) else float('nan')
+          row_text[dpi] = row_line(','.join(sorted(removed)), a0_Dp, icc_nat, icc_rw, delta, mean_ess_Dp)
+          if icc_nat == icc_nat and icc_rw == icc_rw:
+            valid_nats.append(icc_nat)
+            valid_rws.append(icc_rw)
+            valid_deltas.append(delta)
+            valid_ess.append(mean_ess_Dp)
+          pending[dpi] = None  # free memory -- this D' is done
+
+          # Rewrite: header + every completed row so far + current summary.
+          with open(out_path, 'w') as f:
+            f.write('\n'.join(header_lines) + '\n')
+            for rt in row_text:
+              if rt is not None:
+                f.write(rt + '\n')
+            f.write(summary_line(valid_deltas, valid_nats, valid_rws, valid_ess, n_Dp) + '\n')
+
+        if done % log_every == 0:
+          elapsed = time.time() - t0
+          rate = done / elapsed if elapsed > 0 else 0.0
+          remaining_s = (len(jobs) - done) / rate if rate > 0 else float('nan')
+          n_rows_done = sum(1 for rt in row_text if rt is not None)
+          print(f'  [{done}/{len(jobs)} jobs, {n_rows_done}/{n_Dp} D\' rows] '
+                f'elapsed={elapsed:.1f}s est.remaining={remaining_s:.1f}s', file=sys.stderr, flush=True)
 
   print(f'scoring+aggregation pass: {time.time() - t0:.1f}s', file=sys.stderr)
   print(f'Wrote {out_path}', file=sys.stderr)
