@@ -55,6 +55,26 @@ _MIN_SPA_SEGMENTS = 10
 MISSING_SEG_GRANULAR_MQM = frozenset({'enru22'})
 
 
+# Datasets manually excluded from every analysis in this project, decided
+# outside of any statistical/wmt_official detector -- see each entry's own
+# reason. Only takes effect when exclude_outliers=True (same bypass rule as
+# MISSING_SEG_GRANULAR_MQM below), so wmt_official_outliers/wmt_non_
+# competative_outliers's own hardcoded-name validation and any genuinely-
+# raw-pool caller (exclude_outliers=False) still see the true roster.
+MANUALLY_EXCLUDED_DATASETS = frozenset({
+    # ende23: the residual-test deep-dive (codes/scripts/compute_plot_
+    # residual_test.py, and the x = full - (a+b) follow-up) found ende23
+    # has by far the largest "uncategorized MQM" component of any dataset
+    # (segment-level std 1.50 vs. <=0.34 everywhere else), driven almost
+    # entirely by MQM's vague 'Other' catch-all category (407 of 766
+    # uncategorized errors; 'Source issue' contributes zero weight), and
+    # its cross-scorer residual-correlation heatmap showed the most
+    # distinctive two-cluster structure of any dataset. Excluded
+    # project-wide by explicit decision as of this session.
+    'ende23',
+})
+
+
 def real_systems(
     dataset: str, root: str = '.', exclude_outliers: bool = True,
     excl_missing_seg_granular_mqm: bool = False,
@@ -75,11 +95,15 @@ def real_systems(
   roster, since none of WMT20's officially-listed outliers exist in this
   project's smaller raw-TSV 2020 subset to be verified against, so
   wmt_official cannot certify them clean and drops them entirely rather
-  than silently claiming otherwise. Pass exclude_outliers=False to get the
-  untouched raw roster instead -- needed by, among others, wmt_official_
-  outliers/wmt_non_competative_outliers's own validation (which checks
-  their hardcoded names against a roster that must still contain them)
-  and any "no removal" baseline that needs the genuinely raw pool.
+  than silently claiming otherwise. It ALSO includes MANUALLY_EXCLUDED_
+  DATASETS (currently just ende23, see its own comment above): real_
+  systems('ende23') now returns an EMPTY list too, project-wide, by
+  explicit decision rather than any statistical detector. Pass
+  exclude_outliers=False to get the untouched raw roster instead --
+  needed by, among others, wmt_official_outliers/wmt_non_competative_
+  outliers's own validation (which checks their hardcoded names against a
+  roster that must still contain them) and any "no removal" baseline that
+  needs the genuinely raw pool.
 
   excl_missing_seg_granular_mqm (default False): pass True to ALSO drop
   MISSING_SEG_GRANULAR_MQM datasets (currently just enru22) entirely -- for
@@ -92,6 +116,8 @@ def real_systems(
   raw = sorted(s for s in sys_df.index if not is_reference_or_human(s))
   if not exclude_outliers:
     return raw
+  if dataset in MANUALLY_EXCLUDED_DATASETS:
+    return []
   if excl_missing_seg_granular_mqm and dataset in MISSING_SEG_GRANULAR_MQM:
     return []
   outliers = wmt_official_outliers(dataset, raw)
