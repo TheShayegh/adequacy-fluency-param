@@ -74,6 +74,12 @@ MANUALLY_EXCLUDED_DATASETS = frozenset({
     'ende23',
 })
 
+# real_scorers' zero-variance test for "this scorer cannot rank the roster
+# at all". Exact rather than statistical: the scorers it catches assign
+# literally the same float to every system, so any positive tolerance well
+# under float noise on the score scale works.
+_DEGENERATE_TOL = 1e-12
+
 
 def real_systems(
     dataset: str, root: str = '.', exclude_outliers: bool = True,
@@ -122,6 +128,89 @@ def real_systems(
     return []
   outliers = wmt_official_outliers(dataset, raw)
   return [s for s in raw if s not in outliers]
+
+
+def real_scorers(
+    dataset: str, root: str = '.', systems: list[str] | None = None,
+    require_seg_scores: bool = False, exclude_degenerate: bool = True,
+    deduplicate: bool = True,
+) -> list[str]:
+  """Sorted usable scorer (automatic metric) names for a dataset -- the
+  scorer-side analogue of real_systems(), which screens the OTHER axis of
+  the same rectangle. Neither implies the other: real_systems drops
+  translation systems (outliers, excluded datasets), this drops metrics.
+
+  systems: the roster to evaluate the scorers against; defaults to
+  real_systems(dataset) with excl_missing_seg_granular_mqm tied to
+  require_seg_scores, since a caller needing segment scores needs the
+  segment-aligned roster too. Returns [] when the roster is empty.
+
+  exclude_degenerate (default True): drop scorers that assign every system
+  the identical score, i.e. that cannot rank the roster at all. Detected,
+  not hardcoded -- it is an exact zero-variance test with no threshold to
+  tune. Currently this is exactly WMT24's `sentinel-ref-mqm` and
+  `sentinel-src-mqm` in ende24/enes24/jazh24, which score the reference or
+  the source alone and ignore the candidate translation entirely (they
+  exist to expose metric artifacts, and are not metrics of translation
+  quality). `sentinel-cand-mqm` does score the candidate and is NOT
+  degenerate, so it survives -- which is why this is a data test rather
+  than a name blacklist. Such scorers make every ratio-to-baseline
+  quantity 0/0 and every ranking metametric undefined.
+
+  deduplicate (default True): several WMT24 submissions are byte-identical
+  to each other (ende24/enes24/jazh24 XLsimDA == XLsimMqm, plus three
+  metametrics_mt_mqm_* pairs). Keeping both double-counts one scorer in
+  any "distribution across scorers" statistic, so only the alphabetically
+  first of each identical group is kept. Deduplication happens at the
+  level the caller will actually read -- segment matrices when
+  require_seg_scores, system score vectors otherwise -- because the two
+  disagree: a .sys.score file is supplied by the submitter, not recomputed
+  as the mean of that metric's own .seg.score file, so enes24's
+  metametrics_mt_mqm_kendall matches metametrics_mt_mqm_hybrid_kendall
+  segment-for-segment while their system vectors differ.
+
+  require_seg_scores (default False, mirroring real_systems'
+  excl_missing_seg_granular_mqm opt-in): also drop scorers with no usable
+  segment-level file, for callers that read segment scores and would
+  otherwise get names they cannot use. Costs a segment-file read per
+  scorer. Currently drops 20 (scorer, dataset) pairs, including BLEU on
+  every wmt21 set and the six ende22/zhen22 HuaweiTSC_EE_BERTScore
+  variants. Left in by default, since system-level-only analyses can use
+  them."""
+  if systems is None:
+    systems = real_systems(dataset, root=root,
+                           excl_missing_seg_granular_mqm=require_seg_scores)
+  if not systems:
+    return []
+
+  sys_scores = load_metric_sys_scores(dataset, systems, root=root)
+  names = sorted(sys_scores)
+
+  if exclude_degenerate:
+    names = [
+        s for s in names
+        if np.nanstd(sys_scores[s].to_numpy(dtype=float)) > _DEGENERATE_TOL
+    ]
+
+  seg = {}
+  if require_seg_scores:
+    for s in names:
+      m = load_metric_seg_scores(dataset, s, systems, root=root)
+      if m is not None and m.shape[0] == len(systems) and not np.isnan(m).all():
+        seg[s] = m
+    names = [s for s in names if s in seg]
+
+  if deduplicate:
+    kept, seen = [], set()
+    for s in names:
+      key = (seg[s] if require_seg_scores
+             else np.round(sys_scores[s].to_numpy(dtype=float), 12)).tobytes()
+      if key not in seen:
+        seen.add(key)
+        kept.append(s)
+    names = kept
+
+  return names
 
 
 def load_scorer_inputs(
