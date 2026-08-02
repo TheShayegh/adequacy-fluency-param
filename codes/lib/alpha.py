@@ -84,6 +84,27 @@ def alpha_min_max(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
   return min(vals), max(vals)
 
 
+def union_alpha_grid(a: np.ndarray, b: np.ndarray, step: float = 0.01) -> list[float]:
+  """The alpha grid for the scorer-orientation experiment (lib.synthetic_
+  scorer_orientation): the union of every pairwise alpha_ij of D
+  (`pairwise_alphas`) with a plain uniform sweep of [alpha_min, alpha_max]
+  at `step` -- no adaptive gap-filling, just two grids merged and
+  deduplicated (rounded to avoid float-noise near-duplicates). The
+  alpha_ij's themselves are exactly the alpha values where some system
+  pair's relative contribution to the pooled variance ratio changes
+  (action_plan.md 3.8) -- i.e. potential kinks in w*(alpha) (Corollary 2)
+  -- so this grid samples those exactly, on top of the uniform sweep's even
+  coverage everywhere else. An earlier version filled only the gaps between
+  adjacent alpha_ij wider than a threshold, instead of a plain uniform
+  sweep; dropped as needless complexity once the simpler union looked just
+  as good."""
+  alpha_lo, alpha_hi = alpha_min_max(a, b)
+  n = int(round((alpha_hi - alpha_lo) / step))
+  uniform = np.linspace(alpha_lo, alpha_hi, n + 1)
+  alpha_ijs = [v for _, _, v in pairwise_alphas(a, b)]
+  return sorted(set(round(v, 10) for v in list(uniform) + alpha_ijs))
+
+
 def build_alpha_grid(
     lo: float, hi: float, n_grid: int, alpha_0s: dict[str, float] | None = None,
     eps_frac: float = 1e-3,

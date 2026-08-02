@@ -18,10 +18,10 @@ alpha.py's A/B matrices) but deliberately not drawn here for now -- reserved
 for a later use.
 
 Usage: python codes/scripts/plot_scorer_orientation_vs_alpha.py [--dataset ende21]
-           [--n-steps 5] [--step 0.01] [--full-range] [--metametric spa|pa] [--tag TAG]
+           [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa] [--tag TAG]
 (same grid flags as the compute script -- used only to derive the matching
-cache filename via lib.synthetic_scorer_orientation.orientation_tag, unless
---data points at a cache file directly)
+cache filename via lib.synthetic_scorer_orientation.orientation_tag/
+union_grid_tag, unless --data points at a cache file directly)
 
 A donor-capability screen (excluding donors whose dial=1 endpoint doesn't
 correlate with the true aspect, lib.action_plan.md section 2.2) was tried
@@ -44,7 +44,7 @@ import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.lines import Line2D
 
-from lib.synthetic_scorer_orientation import load_orientation_data, orientation_tag
+from lib.synthetic_scorer_orientation import load_orientation_data, orientation_tag, union_grid_tag
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
@@ -213,8 +213,28 @@ def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
   stroke, and even edge-to-edge join styles (butt/miter) left visible
   seams/gaps between segments at low opacity -- plain per-point dots
   sidestep the whole segment-joining problem, at the honest cost of
-  showing exactly what it is: discrete sampled points, not a curve."""
-  ax.scatter(alphas, ys, c=ess_over_k, cmap=cmap, norm=norm, s=size,
+  showing exactly what it is: discrete sampled points, not a curve.
+
+  Non-uniform alpha grids (e.g. lib.alpha.union_alpha_grid, which mixes
+  alpha_ij's exact values into a uniform sweep) can place two dots close
+  enough to visually overlap. Plain ax.scatter with a translucent facecolor
+  would let matplotlib's normal painter's-algorithm blending COMPOSITE them
+  -- the overlap region ends up darker than either dot alone, i.e.
+  opacities summing -- the same
+  fundamental trap as the LineCollection subdivision bug above, just via
+  markers instead of segments. Avoided here by pre-blending each dot's
+  color against the (white) axes background ourselves and plotting the
+  result fully OPAQUE, in ascending order of opacity: every less-solid dot
+  is drawn before every more-solid one regardless of position, so at any
+  overlap the more-solid dot -- now an opaque patch -- simply paints over
+  the less-solid one instead of blending with it. Only the single most
+  solid color shows up anywhere two dots overlap."""
+  rgba = np.asarray(cmap(norm(np.asarray(ess_over_k, dtype=float))))
+  opacity = rgba[:, 3]
+  white = np.ones((len(opacity), 3))
+  solid_rgb = opacity[:, None] * rgba[:, :3] + (1 - opacity[:, None]) * white
+  order = np.argsort(opacity, kind='stable')
+  ax.scatter(np.asarray(alphas)[order], np.asarray(ys)[order], c=solid_rgb[order], s=size,
              linewidths=0, zorder=zorder)
 
 
@@ -255,6 +275,9 @@ if __name__ == '__main__':
   parser.add_argument('--n-steps', type=int, default=5)
   parser.add_argument('--step', type=float, default=0.01)
   parser.add_argument('--full-range', action=argparse.BooleanOptionalAction, default=False)
+  parser.add_argument('--union-grid', action=argparse.BooleanOptionalAction, default=False,
+                       help='load the union-alpha_ij-grid cache (compute_scorer_orientation_vs_alpha.py '
+                            '--union-grid) instead of the other grid modes')
   parser.add_argument('--metametric', choices=['spa', 'pa'], default='spa',
                        help='which cached weighted meta-metric to load/plot')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
@@ -265,7 +288,12 @@ if __name__ == '__main__':
   if args.data:
     data_path = args.data
   else:
-    tag = args.tag or orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric)
+    if args.tag:
+      tag = args.tag
+    elif args.union_grid:
+      tag = union_grid_tag(base, args.step, args.metametric)
+    else:
+      tag = orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric)
     data_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
   if not os.path.exists(data_path):
     sys.exit(f'{data_path} not found -- run compute_scorer_orientation_vs_alpha.py with matching flags first')
@@ -304,7 +332,8 @@ if __name__ == '__main__':
 
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
   metametric_suffix = '' if data['metametric'] == 'spa' else f'_{data["metametric"]}'
-  plot_path = os.path.join(ARTIFACTS_DIR, f'orientation_vs_alpha_{base}{metametric_suffix}.png')
+  grid_suffix = '_union' if args.union_grid else ''
+  plot_path = os.path.join(ARTIFACTS_DIR, f'orientation_vs_alpha_{base}{grid_suffix}{metametric_suffix}.png')
   fig.savefig(plot_path, dpi=150, bbox_inches='tight')
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)

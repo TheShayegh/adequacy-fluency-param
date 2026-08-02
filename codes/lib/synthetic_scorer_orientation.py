@@ -43,6 +43,16 @@ def full_range_alphas(alpha_lo: float, alpha_hi: float, step: float, eps_frac: f
   return [round(start + k * step, 10) for k in range(n + 1)]
 
 
+def union_grid_tag(dataset: str, step: float, metametric: str = 'spa') -> str:
+  """Filename tag for lib.alpha.union_alpha_grid (the union of every
+  pairwise alpha_ij with a plain uniform [alpha_min, alpha_max] sweep at
+  `step`) -- mirrors orientation_tag's compute/plot filename contract, but
+  never collides with it (different literal infix) for the same
+  dataset/step/metametric."""
+  suffix = '' if metametric == 'spa' else f'_{metametric}'
+  return f'{dataset}_union_s{step:g}{suffix}'
+
+
 def orientation_tag(dataset: str, n_steps: int, step: float, full_range: bool, metametric: str = 'spa') -> str:
   """Filename tag shared by compute_scorer_orientation_vs_alpha.py (writer)
   and plot_scorer_orientation_vs_alpha.py (reader), so the same CLI flags

@@ -18,7 +18,7 @@ ESS(w*(alpha)) (action_plan.md section 5) alongside, for plotting next to
 the orientation curves.
 
 Usage: python codes/scripts/compute_scorer_orientation_vs_alpha.py [--dataset ende21]
-           [--n-steps 5] [--step 0.01] [--full-range] [--metametric spa|pa] [--tag TAG]
+           [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa] [--tag TAG]
 """
 
 import argparse
@@ -30,12 +30,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 
-from lib.alpha import alpha_0, alpha_min_max
+from lib.alpha import alpha_0, alpha_min_max, union_alpha_grid
 from lib.consistency import real_scorers, real_systems
 from lib.reweighted_consistency import solve_w_for_datasets
 from lib.synthetic_scorer_alpha_grid import alpha_grid_around, donor_alpha_dial_grid
 from lib.synthetic_scorer_orientation import (
     DIAL_GRID, donor_orientation_by_alpha, full_range_alphas, orientation_tag, save_orientation_data,
+    union_grid_tag,
 )
 from mwb.mqm_scoring import load_system_scores
 
@@ -50,6 +51,10 @@ if __name__ == '__main__':
   parser.add_argument('--full-range', action=argparse.BooleanOptionalAction, default=False,
                        help='sweep the entire reachable [alpha_min, alpha_max] at --step instead of '
                             'the alpha_0(D)-centered +/- n_steps*step window')
+  parser.add_argument('--union-grid', action=argparse.BooleanOptionalAction, default=False,
+                       help='use the union of every pairwise alpha_ij of D with a plain uniform '
+                            '[alpha_min, alpha_max] sweep at --step (lib.alpha.union_alpha_grid) instead '
+                            'of --full-range/the alpha_0(D)-centered window')
   parser.add_argument('--metametric', choices=['spa', 'pa'], default='spa',
                        help='weighted meta-metric to score each dial/alpha cell with')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
@@ -65,7 +70,9 @@ if __name__ == '__main__':
   a_D, b_D = df.loc[systems, 'a'].values, df.loc[systems, 'b'].values
   center_alpha = alpha_0(a_D, b_D)
   alpha_lo, alpha_hi = alpha_min_max(a_D, b_D)
-  if args.full_range:
+  if args.union_grid:
+    alphas = union_alpha_grid(a_D, b_D, step=args.step)
+  elif args.full_range:
     alphas = full_range_alphas(alpha_lo, alpha_hi, args.step)
   else:
     alphas = alpha_grid_around(center_alpha, alpha_lo, alpha_hi, args.n_steps, args.step)
@@ -106,7 +113,12 @@ if __name__ == '__main__':
   A = np.array([orient_by_donor[d]['A'] for d in donors])
   B = np.array([orient_by_donor[d]['B'] for d in donors])
 
-  tag = args.tag or orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric)
+  if args.tag:
+    tag = args.tag
+  elif args.union_grid:
+    tag = union_grid_tag(base, args.step, args.metametric)
+  else:
+    tag = orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric)
   os.makedirs(DATA_DIR, exist_ok=True)
   out_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
   save_orientation_data(
