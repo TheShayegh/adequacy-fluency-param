@@ -1,25 +1,34 @@
-"""Plots <adequacy|fluency>_orientation(SPA_alpha; D) vs. alpha, plus
+"""Plots <adequacy|fluency>_orientation(metametric_alpha; D) vs. alpha, plus
 ESS(w*(alpha)), from the cache written by compute_scorer_orientation_vs_alpha.py
 (artifacts/data/scorer_orientation_<tag>.npz) -- pure plotting, no solver or
 SPA-permutation work happens here, so restyling is cheap to iterate on.
+metametric (spa or pa) is read from the cache itself (whichever
+compute_scorer_orientation_vs_alpha.py --metametric produced it).
 
-Panel 1/2: adequacy_orientation(SPA_alpha; D) / fluency_orientation(SPA_alpha;
-D) vs. alpha -- one independent dot per alpha for the mean-across-donors
-value (no connecting line -- see _add_ess_colored_dots for why), colored by
-ESS: fully transparent at/below the absolute floor ESS=1 (action_plan.md
-section 5), then a 2-segment cubic Hermite spline ramp
-(SplineReliabilityNorm, tuned via codes/scripts/plot_ess_opacity_curve.py's
---shape spline) up to opaque dark blue/red at ESS=K -- plus a dashed
-reference at 0.5 (no systematic preference) and a dotted vertical line at
-alpha_0(D). Per-donor shadow curves are still computed and cached
-(compute_scorer_orientation_vs_alpha.py's A/B matrices) but deliberately
-not drawn here for now -- reserved for a later use.
+Panel 1/2: adequacy_orientation / fluency_orientation vs. alpha -- one
+independent dot per alpha for the mean-across-donors value (no connecting
+line -- see _add_ess_colored_dots for why), colored by ESS: fully
+transparent at/below the absolute floor ESS=1 (action_plan.md section 5),
+then a 2-segment cubic Hermite spline ramp (SplineReliabilityNorm, tuned via
+codes/scripts/plot_ess_opacity_curve.py's --shape spline) up to opaque dark
+blue/red at ESS=K -- plus a dashed reference at 0.5 (no systematic
+preference) and a dotted vertical line at alpha_0(D). Per-donor shadow
+curves are still computed and cached (compute_scorer_orientation_vs_
+alpha.py's A/B matrices) but deliberately not drawn here for now -- reserved
+for a later use.
 
 Usage: python codes/scripts/plot_scorer_orientation_vs_alpha.py [--dataset ende21]
-           [--n-steps 5] [--step 0.01] [--full-range] [--tag TAG]
+           [--n-steps 5] [--step 0.01] [--full-range] [--metametric spa|pa] [--tag TAG]
 (same grid flags as the compute script -- used only to derive the matching
 cache filename via lib.synthetic_scorer_orientation.orientation_tag, unless
 --data points at a cache file directly)
+
+A donor-capability screen (excluding donors whose dial=1 endpoint doesn't
+correlate with the true aspect, lib.action_plan.md section 2.2) was tried
+and dropped: it barely moved the dataset-level curves in practice (a
+donor's orientation_score turned out to be close to uncorrelated with its
+own capability), so this script always averages over every cached donor --
+the simple version.
 """
 
 import argparse
@@ -246,6 +255,8 @@ if __name__ == '__main__':
   parser.add_argument('--n-steps', type=int, default=5)
   parser.add_argument('--step', type=float, default=0.01)
   parser.add_argument('--full-range', action=argparse.BooleanOptionalAction, default=False)
+  parser.add_argument('--metametric', choices=['spa', 'pa'], default='spa',
+                       help='which cached weighted meta-metric to load/plot')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
   parser.add_argument('--data', type=str, default=None, help='explicit path to a scorer_orientation_*.npz cache')
   args = parser.parse_args()
@@ -254,7 +265,7 @@ if __name__ == '__main__':
   if args.data:
     data_path = args.data
   else:
-    tag = args.tag or orientation_tag(base, args.n_steps, args.step, args.full_range)
+    tag = args.tag or orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric)
     data_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
   if not os.path.exists(data_path):
     sys.exit(f'{data_path} not found -- run compute_scorer_orientation_vs_alpha.py with matching flags first')
@@ -269,16 +280,17 @@ if __name__ == '__main__':
   norm = SplineReliabilityNorm(vmin=cutoff_frac, vmax=1.0)
 
   cmaps = {label: _ess_over_k_cmap(_DARK_COLOR[label]) for label in ('A', 'B')}
-  mean_curves = {label: np.nanmean(data[label], axis=0) for label in ('A', 'B')}
   # data['A']/data['B'] are (n_donors, n_alpha) -- per-donor shadow curves,
   # kept for later use (see _draw_orientation_axes), not drawn here.
+  mean_curves = {label: np.nanmean(data[label], axis=0) for label in ('A', 'B')}
 
   fig, ax = plt.subplots(figsize=(9, 6))
   ax.set_box_aspect(1)  # square PLOT box -- independent of the title/colorbar space around it
   _draw_orientation_axes(ax, data['alphas'], mean_curves, ess_over_k, cmaps, norm, data['center_alpha'])
 
-  fig.suptitle(f'{data["dataset"]}: scorer orientation vs. alpha (K={K} systems, '
-               f'{len(data["donors"])} donors, alpha_0(D)={data["center_alpha"]:.4f})', fontsize=11)
+  fig.suptitle(f'{data["dataset"]}: scorer orientation vs. alpha ({data["metametric"].upper()}, '
+               f'K={K} systems, {len(data["donors"])} donors, '
+               f'alpha_0(D)={data["center_alpha"]:.4f})', fontsize=11)
   fig.tight_layout(rect=[0, 0, 0.85, 0.95])
 
   # Strips are added AFTER tight_layout, positioned off the axes' FINAL
@@ -291,7 +303,8 @@ if __name__ == '__main__':
   _draw_reliability_strip(fig, ax, cmaps['B'], norm, K, _ESS_CUTOFF_ABS, x_offset=0.02 + _STRIP_WIDTH, label=True)
 
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-  plot_path = os.path.join(ARTIFACTS_DIR, f'orientation_vs_alpha_{base}.png')
+  metametric_suffix = '' if data['metametric'] == 'spa' else f'_{data["metametric"]}'
+  plot_path = os.path.join(ARTIFACTS_DIR, f'orientation_vs_alpha_{base}{metametric_suffix}.png')
   fig.savefig(plot_path, dpi=150, bbox_inches='tight')
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)
