@@ -15,16 +15,23 @@ All MQM). Augmented with three sentinel curves (paper Sec 4.2):
     lam=1 -> the Adequacy MQM vertex (y=1 exactly); lam=0 -> the Fluency MQM
     vertex (x=1 exactly). "No system can surpass" this curve.
   - adequacy_knowledge_line: score_seg(lam) = lam*a_seg + (1-lam)*r_seg,
-    r_seg segment-and-system-wise uniform noise scaled to Adequacy MQM's own
-    per-segment range (see _uniform_like). Traces what's reachable by
+    r_seg segment-and-system-wise uniform noise. Traces what's reachable by
     mixing Adequacy MQM with pure noise -- any fluency-axis position it
     reaches is due only to the correlation between the two aspects.
-  - fluency_knowledge_line: the mirror, mixing Fluency MQM with noise scaled
-    to ITS OWN per-segment range.
+  - fluency_knowledge_line: the mirror, mixing Fluency MQM with noise.
 
 Both knowledge lines are paper-specified as an average of 10 curves, each
-redrawing r_seg from a fresh RNG instance (see knowledge_line's `shadows`
-return).
+redrawing r_seg from a fresh RNG instance (see knowledge_lines' `shadows`
+returns) -- computed TOGETHER by knowledge_lines, not as two independent
+sweeps, and sharing the SAME r_seg (one draw per instance k, uniform over
+the per-segment range that COVERS BOTH a_seg and b_seg -- see
+knowledge_lines) rather than each line rescaling its own independent draw
+to its own aspect's range. This is what makes the two lines a genuine
+CONNECTED pair at each instance k: at lam=0 both curves evaluate the exact
+same r_seg, so shadow k of the adequacy-knowledge line and shadow k of the
+fluency-knowledge line meet at the exact same (x, y) point -- the shared
+noise-only vertex both curves fan out from -- rather than two
+independently-scaled endpoints that merely happened to be seeded together.
 
 Two distinct notions of "segment" are load-bearing here, kept in separate
 functions:
@@ -216,43 +223,60 @@ def tradeoff_line(
   return pts
 
 
-def _uniform_like(seg: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-  """Per-segment (column) uniform noise, shape == seg.shape: at column j,
-  every system's noise value is drawn independently from
-  Uniform[min_i seg[i,j], max_i seg[i,j]] -- "uniform in the range of
-  [Adequacy/Fluency] MQM scores for each segment" (paper Sec 4.2), so the
-  noise's local scale tracks the real aspect's own per-segment spread
-  rather than using one dataset-wide range."""
-  lo = seg.min(axis=0, keepdims=True)
-  hi = seg.max(axis=0, keepdims=True)
-  return lo + rng.random(seg.shape) * (hi - lo)
+def _combined_range(a_seg: np.ndarray, b_seg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  """Per-segment (column) (lo, hi), covering BOTH a_seg and b_seg at once
+  (lo = min over both, hi = max over both) -- the range one SHARED noise
+  draw is rescaled into, symmetric between the two aspects rather than
+  favoring either one's own range."""
+  lo = np.minimum(a_seg.min(axis=0, keepdims=True), b_seg.min(axis=0, keepdims=True))
+  hi = np.maximum(a_seg.max(axis=0, keepdims=True), b_seg.max(axis=0, keepdims=True))
+  return lo, hi
 
 
-def knowledge_line(
-    aspect_seg: np.ndarray, a_seg: np.ndarray, b_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
+def knowledge_lines(
+    a_seg: np.ndarray, b_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
     n_random: int = N_RANDOM_INSTANCES, num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
     seed: int = DEFAULT_SEED, noise_seed: int = DEFAULT_NOISE_SEED,
-) -> tuple[list[list[tuple[float, float]]], list[tuple[float, float]]]:
-  """(shadows, mean): shadows is one [(x,y) per lam] curve per random-noise
-  instance (n_random of them, each score_seg(lam) = lam*aspect_seg +
-  (1-lam)*noise, noise fresh per instance via _uniform_like(aspect_seg,
-  ...)); mean is their point-wise average -- the adequacy_knowledge_line
-  (aspect_seg=a_seg) or fluency_knowledge_line (aspect_seg=b_seg) of the
-  paper's Figure SPAplane. p_a/p_b are computed once and reused across
-  every instance and lam (they don't depend on either)."""
+) -> tuple[list[list[tuple[float, float]]], list[tuple[float, float]],
+           list[list[tuple[float, float]]], list[tuple[float, float]]]:
+  """(a_shadows, a_mean, b_shadows, b_mean): the adequacy- and fluency-
+  knowledge lines (paper Figure SPAplane) computed TOGETHER, so their
+  shadow instances are genuinely CONNECTED pairs, not two independent
+  sweeps. For shadow instance k, ONE noise segment r_seg (per-segment
+  Uniform[lo, hi], (lo, hi) = _combined_range(a_seg, b_seg) -- covering
+  both aspects' ranges rather than favoring either one) is drawn ONCE and
+  used for BOTH curves: score_a(lam) = lam*a_seg + (1-lam)*r_seg (the k-th
+  adequacy-knowledge shadow) and score_b(lam) = lam*b_seg + (1-lam)*r_seg
+  (the k-th fluency-knowledge shadow). At lam=0 both curves evaluate the
+  exact same r_seg, so pts_a[0] == pts_b[0] EXACTLY -- shadow k of one line
+  and shadow k of the other visibly meet at that shared noise-only point,
+  rather than two independently-scaled endpoints. The OLD design rescaled
+  a shared raw draw separately per aspect (once to a_seg's own range, once
+  to b_seg's), which kept the two curves correlated but never let them
+  actually touch, since a rescaled-to-a's-range point and a rescaled-to-
+  b's-range point are generally different points even from the same raw
+  draw. p_a/p_b are computed once and reused across every instance and
+  lam."""
   p_a = pairwise_p_values(a_seg, num_permutations, seed)
   p_b = pairwise_p_values(b_seg, num_permutations, seed)
-  shadows = []
+  lo, hi = _combined_range(a_seg, b_seg)
+  a_shadows, b_shadows = [], []
   for k in range(n_random):
     rng = np.random.default_rng(noise_seed + k)
-    noise_seg = _uniform_like(aspect_seg, rng)
-    pts = []
+    noise_seg = lo + rng.random(a_seg.shape) * (hi - lo)
+    pts_a, pts_b = [], []
     for lam in lambda_grid:
-      score = lam * aspect_seg + (1.0 - lam) * noise_seg
-      p_m = pairwise_p_values(score, num_permutations, seed)
-      x = soft_pairwise_accuracy_from_pvalues(p_b, p_m)
-      y = soft_pairwise_accuracy_from_pvalues(p_a, p_m)
-      pts.append((x, y))
-    shadows.append(pts)
-  mean = np.mean(np.array(shadows), axis=0).tolist()
-  return shadows, [tuple(pt) for pt in mean]
+      score_a = lam * a_seg + (1.0 - lam) * noise_seg
+      p_m_a = pairwise_p_values(score_a, num_permutations, seed)
+      pts_a.append((soft_pairwise_accuracy_from_pvalues(p_b, p_m_a),
+                    soft_pairwise_accuracy_from_pvalues(p_a, p_m_a)))
+
+      score_b = lam * b_seg + (1.0 - lam) * noise_seg
+      p_m_b = pairwise_p_values(score_b, num_permutations, seed)
+      pts_b.append((soft_pairwise_accuracy_from_pvalues(p_b, p_m_b),
+                    soft_pairwise_accuracy_from_pvalues(p_a, p_m_b)))
+    a_shadows.append(pts_a)
+    b_shadows.append(pts_b)
+  a_mean = np.mean(np.array(a_shadows), axis=0).tolist()
+  b_mean = np.mean(np.array(b_shadows), axis=0).tolist()
+  return a_shadows, [tuple(pt) for pt in a_mean], b_shadows, [tuple(pt) for pt in b_mean]

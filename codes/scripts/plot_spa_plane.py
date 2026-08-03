@@ -31,7 +31,7 @@ import numpy as np
 
 from lib.consistency import real_systems
 from lib.dataset_dirs import DATASET_DIRS
-from lib.spa_plane import build_af_seg_matrices, knowledge_line, scorer_spa_points, tradeoff_line
+from lib.spa_plane import build_af_seg_matrices, knowledge_lines, scorer_spa_points, tradeoff_line
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 ARTIFACTS_DIR = os.path.join(ROOT, 'artifacts', 'inventory_spa_plane')
@@ -74,8 +74,7 @@ if __name__ == '__main__':
       continue
 
     tradeoff_pts = tradeoff_line(a_seg, b_seg)
-    a_shadows, a_mean = knowledge_line(a_seg, a_seg, b_seg)
-    b_shadows, b_mean = knowledge_line(b_seg, a_seg, b_seg)
+    a_shadows, a_mean, b_shadows, b_mean = knowledge_lines(a_seg, b_seg)
     points = scorer_spa_points(base, systems, root=ROOT)
 
     elapsed = time.time() - t0

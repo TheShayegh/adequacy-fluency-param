@@ -30,7 +30,7 @@ from lib.metric_scores import (
     load_metric_sys_scores, load_human_seg_scores, load_metric_seg_scores,
     jointly_valid_columns,
 )
-from lib.outlier_detection import wmt_official_outliers
+from lib.outlier_detection import wmt_official_outliers, wmt_non_competative_outliers
 from lib.systems import is_reference_or_human
 from mwb.mqm_scoring import load_system_scores
 
@@ -83,7 +83,7 @@ _DEGENERATE_TOL = 1e-12
 
 def real_systems(
     dataset: str, root: str = '.', exclude_outliers: bool = True,
-    excl_missing_seg_granular_mqm: bool = False,
+    excl_missing_seg_granular_mqm: bool = False, exclude_non_competative: bool = False,
 ) -> list[str]:
   """Sorted real (non-reference/human) system names for a dataset -- the
   canonical ordering scorer_scores() uses internally, and the ordering any
@@ -104,8 +104,22 @@ def real_systems(
   than silently claiming otherwise. It ALSO includes MANUALLY_EXCLUDED_
   DATASETS (currently just ende23, see its own comment above): real_
   systems('ende23') now returns an EMPTY list too, project-wide, by
-  explicit decision rather than any statistical detector. Pass
-  exclude_outliers=False to get the untouched raw roster instead --
+  explicit decision rather than any statistical detector.
+
+  exclude_non_competative (default False): pass True to ALSO drop
+  wmt_non_competative_outliers (WMT_NON_COMPETATIVE_SYSTEMS) -- hand-curated
+  WMT organizer-inserted systems (calibration placeholders, MBR-reranking
+  baselines, MSLC) that are not independent MT submissions, which wmt_
+  official's own outlier metadata doesn't flag (a different concern --
+  wmt_official is about ranking-quality outliers, this is about roster
+  membership). Tried as a project-wide default in this session -- the
+  scorer-orientation investigation that surfaced it found solve_w_exact's
+  optimal support pivoting onto zhen21's 5 metricsystemN placeholders
+  (K=13, so >1/3 of the whole roster) around alpha~0.71-0.85 -- but the
+  result of turning it on by default project-wide wasn't good, so it's
+  back to opt-in, off by default, rather than folded into exclude_outliers.
+
+  Pass exclude_outliers=False to get the untouched raw roster instead --
   needed by, among others, wmt_official_outliers/wmt_non_competative_
   outliers's own validation (which checks their hardcoded names against a
   roster that must still contain them) and any "no removal" baseline that
@@ -127,6 +141,8 @@ def real_systems(
   if excl_missing_seg_granular_mqm and dataset in MISSING_SEG_GRANULAR_MQM:
     return []
   outliers = wmt_official_outliers(dataset, raw)
+  if exclude_non_competative:
+    outliers = outliers | wmt_non_competative_outliers(dataset, raw)
   return [s for s in raw if s not in outliers]
 
 

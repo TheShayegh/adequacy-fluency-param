@@ -29,7 +29,7 @@ from lib.metametrics import (
 )
 from lib.metric_scores import load_human_seg_scores, load_metric_seg_scores
 from lib.spa_plane import DEFAULT_NUM_PERMUTATIONS, DEFAULT_SEED, positional_af_matrices
-from lib.synthetic_scorers import DIAL_GRID, donor_family
+from lib.synthetic_scorers import DIAL_GRID, SYNTHESIS_GENERATORS, donor_family_joint
 from mwb.mqm_scoring import load_system_scores
 
 # Same floor lib.consistency/lib.spa_plane/lib.synthetic_scorers use before
@@ -38,6 +38,26 @@ from mwb.mqm_scoring import load_system_scores
 # a donor's inclusion and its dial families are identical between an
 # spa run and a pa run on the same dataset -- only the aggregation differs.
 _MIN_SPA_SEGMENTS = 10
+
+# "Fake donor" names: instead of a real metric's segment scores, donor_seg
+# is one of the gold aspect signals itself (a_pos/b_pos/human_seg, already
+# loaded for every donor anyway) -- i.e. what happens if the base scorer IS
+# a perfect oracle for one aspect (or their sum), dialed through the exact
+# same family/alpha/metametric machinery as any real donor. AllMQM uses
+# human_seg (the official All-MQM file, mwb.mqm_scoring's 't'/all_mqm
+# column) rather than a_pos+b_pos, since that's the literal ground-truth
+# total rather than a derived sum of the two sub-scores.
+ASPECT_DONORS = ('AdequacyMQM', 'FluencyMQM', 'AllMQM')
+
+
+def _aspect_donor_seg(donor_name: str, a_pos: np.ndarray, b_pos: np.ndarray, human_seg: np.ndarray) -> np.ndarray:
+  if donor_name == 'AdequacyMQM':
+    return a_pos
+  if donor_name == 'FluencyMQM':
+    return b_pos
+  if donor_name == 'AllMQM':
+    return human_seg
+  raise ValueError(f'not an aspect donor: {donor_name!r}')
 
 
 def alpha_grid_around(
@@ -55,17 +75,42 @@ def alpha_grid_around(
 
 def donor_alpha_dial_grid(
     dataset: str, donor_name: str, systems: list[str], w_by_alpha: dict[float, np.ndarray],
-    root: str = '.', dial_grid=DIAL_GRID, metametric: str = 'spa',
+    root: str = '.', dial_grid=DIAL_GRID, metametric: str = 'spa', synthesis: str = 'offset',
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
 ) -> dict[str, np.ndarray] | None:
   """{'A': (n_dial, n_alpha) weighted meta-metric grid, 'B': same for the
-  fluency family, 'dials': the dial_grid as an array, 'alphas':
-  sorted(w_by_alpha) as an array} for one donor. None if this donor lacks
+  fluency family, 'J' or 'T': same for the third family (see below),
+  'dials': the dial_grid as an array, 'alphas': sorted(w_by_alpha) as an
+  array} for one donor. None if this donor lacks
   the segment coverage lib.synthetic_scorers.all_synthetic_family_points
   already requires (no usable segment file, dataset alignment unvalidated,
   or too few jointly-valid positions -- now also intersected with All MQM's
   own segment coverage, needed for SPA's human side and, for consistency,
   applied to PA too even though PA itself only reads system-level scores).
+
+  donor_name may also be one of ASPECT_DONORS ('AdequacyMQM', 'FluencyMQM',
+  'AllMQM'): a "fake donor" whose donor_seg is the gold aspect signal itself
+  (a_pos/b_pos/human_seg) rather than a real metric's segment scores --
+  everything downstream (family building, alpha/metametric sweep) is
+  identical.
+
+  Two dial families are always built: 'A' (dialed on Adequacy MQM) and 'B'
+  (dialed on Fluency MQM). A third, synthesis-dependent family is also
+  built:
+
+    - synthesis='offset': 'J' (lib.synthetic_scorers.donor_family_joint),
+      dialed on the JOINT (Adequacy, Fluency) pair -- the generalization of
+      offset's own m/e/ebar_k decomposition to a joint condition instead of
+      either aspect alone.
+    - synthesis='additive'/'additive_mean': 'T' (dialed on All MQM, i.e.
+      human_seg -- the official total, not a_pos+b_pos, matching
+      ASPECT_DONORS' own 'AllMQM' convention above), orientation-neutral by
+      construction (t=a+b favors neither aspect) -- a natural-truth family
+      alongside the two aspect-only ones. Restricted to the additive
+      methods because that neutrality argument relies on injecting the
+      aspect directly rather than going through m/e/ebar_k -- it does not
+      hold for synthesis='offset' (see lib.synthetic_scorers module
+      docstring), which is why 'offset' gets 'J' here instead.
 
   metametric: 'spa' (default) or 'pa' (action_plan.md section 7). For spa,
   p_human is computed once per donor (fixed mask) and reused across every
@@ -77,20 +122,33 @@ def donor_alpha_dial_grid(
   mean_i y_A(k,i) (action_plan.md section 4) is computed once per dial and
   reused across every alpha, weighed against system-level All MQM ('t').
 
+  synthesis: which lib.synthetic_scorers family generator builds the A/B
+  (and, for additive/additive_mean, T) dial sweep -- 'offset' (default,
+  the original section-4 generator), 'additive' (y + dial*aspect), or
+  'additive_mean' (y + dial*abar_k). J (offset only) always goes through
+  donor_family_joint directly, not build_family, since it needs both
+  aspects jointly rather than one aspect vector.
+
   Column ai's ESS/weighting come from w_by_alpha[alphas[ai]]; row di's dial
   value is dial_grid[di]."""
   if metametric not in ('spa', 'pa'):
     raise ValueError(f"metametric must be 'spa' or 'pa', got {metametric!r}")
+  if synthesis not in SYNTHESIS_GENERATORS:
+    raise ValueError(f'synthesis must be one of {sorted(SYNTHESIS_GENERATORS)}, got {synthesis!r}')
+  build_family = SYNTHESIS_GENERATORS[synthesis]
 
   pos = positional_af_matrices(dataset, systems, root=root)
   if pos is None:
     return None
   a_pos, b_pos = pos
-  donor_seg = load_metric_seg_scores(dataset, donor_name, systems, root=root)
-  if donor_seg is None or donor_seg.shape[1] != a_pos.shape[1]:
-    return None
   human_seg = load_human_seg_scores(dataset, systems, root=root)
   if human_seg is None or human_seg.shape[1] != a_pos.shape[1]:
+    return None
+  if donor_name in ASPECT_DONORS:
+    donor_seg = _aspect_donor_seg(donor_name, a_pos, b_pos, human_seg)
+  else:
+    donor_seg = load_metric_seg_scores(dataset, donor_name, systems, root=root)
+  if donor_seg is None or donor_seg.shape[1] != a_pos.shape[1]:
     return None
 
   mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(b_pos).any(axis=0)
@@ -104,10 +162,15 @@ def donor_alpha_dial_grid(
   alphas = sorted(w_by_alpha)
   out: dict[str, np.ndarray] = {}
 
+  built = {'A': build_family(donor_seg, a_pos, dial_grid), 'B': build_family(donor_seg, b_pos, dial_grid)}
+  if synthesis == 'offset':
+    built['J'] = donor_family_joint(donor_seg, a_pos, b_pos, dial_grid)
+  else:
+    built['T'] = build_family(donor_seg, human_seg, dial_grid)
+
   if metametric == 'spa':
     p_human = pairwise_p_values(human_seg, num_permutations, seed)
-    for label, aspect in (('A', a_pos), ('B', b_pos)):
-      family = donor_family(donor_seg, aspect, dial_grid)
+    for label, family in built.items():
       grid = np.full((len(dial_grid), len(alphas)), np.nan)
       for di, dial in enumerate(dial_grid):
         p_metric = pairwise_p_values(family[dial], num_permutations, seed)
@@ -116,8 +179,7 @@ def donor_alpha_dial_grid(
       out[label] = grid
   else:  # pa
     t = load_system_scores(dataset, root=root).loc[systems, 't'].values
-    for label, aspect in (('A', a_pos), ('B', b_pos)):
-      family = donor_family(donor_seg, aspect, dial_grid)
+    for label, family in built.items():
       grid = np.full((len(dial_grid), len(alphas)), np.nan)
       for di, dial in enumerate(dial_grid):
         u_k = family[dial].mean(axis=1)  # u_k(A) = mean_i y_A(k,i), action_plan.md section 4
