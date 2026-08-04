@@ -276,8 +276,11 @@ def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
              linewidths=0, zorder=zorder)
 
 
+_LOO_MARKER = 'X'
+
+
 def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, center_alpha, families=('A', 'B'),
-                            synth25_pools=None, synth25_metric_label=''):
+                            synth25_pools=None, synth25_metric_label='', loo_points=None):
   """`families` (A=adequacy, B=fluency, and/or the cache's third family --
   T=orientation-neutral All-MQM or J=orientation-neutral Joint, whichever
   is present) overlaid on one axes -- distinct by hue (cmaps['A']=blue,
@@ -304,7 +307,34 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   SPA_synth25/PA_synth25 baseline) and smaller for the other 5 -- own
   legend (marker shape -> pool name) kept separate from the dot-color
   legend so the two encodings (dot color = reliability, marker shape =
-  which pool) don't get conflated."""
+  which pool) don't get conflated.
+
+  loo_points: optional {'dropped_systems': [...], 'alpha0': (K,), 'A':
+  (K,), 'B': (K,), 'T': (K,), 'J': (K,)} from compute_scorer_orientation_
+  leave_one_out.py -- one point per leave-one-out subset D' = D \\ {s},
+  plotted at that subset's OWN alpha_0(D') (the uniform-weight balance,
+  lib.alpha.alpha_0's own definition -- no reweight_exact solve needed).
+  Independent overlay from synth25_pools: same plain weighted-SPA/PA
+  machinery as the main curves, not the synth25 union metametric. Unlike
+  the pool markers, every point shares ONE marker icon (_LOO_MARKER) --
+  only color (by family) distinguishes them, since there's no shape-worthy
+  categorical structure across K roughly-similar leave-one-out subsets."""
+  if loo_points:
+    # Thin connecting line under the dots -- ONLY for the --overlay-loo
+    # plot (this branch), not the default/--overlay-synth25 plots: a plain
+    # single-stroke, constant-color line (no per-segment opacity) doesn't
+    # hit the LineCollection alpha-compositing bug _add_ess_colored_dots's
+    # own docstring describes (that was about blending many independently
+    # translucent segments, not one uniform stroke), and the zoomed loo
+    # view is dense/narrow enough that a guide line between the already-
+    # visible dots is legible rather than misleading the way it would be
+    # across the default plot's full alpha range.
+    order = np.argsort(alphas)
+    xs_sorted = np.asarray(alphas)[order]
+    for label in families:
+      ys_sorted = np.asarray(mean_curves[label])[order]
+      finite = ~np.isnan(ys_sorted)
+      ax.plot(xs_sorted[finite], ys_sorted[finite], color=cmaps[label](1.0), linewidth=0.8, alpha=0.5, zorder=3)
   for label in families:
     _add_ess_colored_dots(ax, alphas, mean_curves[label], ess_over_k, cmaps[label], norm, size=10, zorder=4)
 
@@ -329,12 +359,13 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   # of the plot area entirely rather than overlapping the dots/markers.
   # fig.savefig's bbox_inches='tight' (set by every caller) expands the
   # saved image to include them, so nothing is cut off.
-  dot_anchor = (0.1, -0.14) if synth25_pools else (0.5, -0.14)
+  dot_anchor = (0.1, -0.14) if (synth25_pools or loo_points) else (0.5, -0.14)
   dot_legend = ax.legend(handles=proxies, fontsize=8, loc='upper center', bbox_to_anchor=dot_anchor,
                           title='color = reliability, ESS', title_fontsize=7)
+  ax.add_artist(dot_legend)
 
+  pool_proxies = []
   if synth25_pools:
-    pool_proxies = []
     for pool_name, info in synth25_pools.items():
       a0 = info.get('alpha0')
       if a0 is None or a0 != a0:  # excludes NaN/absent
@@ -358,9 +389,47 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
                                     markersize=(7.5 if size == _POOL_MARKER_SIZE_LARGE else 4.6),
                                     label=pool_name))
     if pool_proxies:
-      ax.add_artist(dot_legend)
-      ax.legend(handles=pool_proxies, fontsize=7, loc='upper center', bbox_to_anchor=(0.95, -0.14), ncol=2,
-                title=f'pool (marker shape) @ its own alpha_0 ({synth25_metric_label})', title_fontsize=7)
+      pool_legend = ax.legend(handles=pool_proxies, fontsize=7, loc='upper center', bbox_to_anchor=(0.95, -0.14),
+                               ncol=2, title=f'pool (marker shape) @ its own alpha_0 ({synth25_metric_label})',
+                               title_fontsize=7)
+      ax.add_artist(pool_legend)
+
+  if loo_points and len(loo_points.get('dropped_systems', [])) > 0:
+    # Every leave-one-out subset D' = D \ {s} shares ONE marker icon
+    # (_LOO_MARKER) -- unlike the synth25 pools, there's no shape encoding
+    # here (just K roughly-similar-sized subsets, not 6 qualitatively
+    # different pool compositions); only color (by family, same cmaps as
+    # the dot-color legend) distinguishes A/B/T/J at each subset's own
+    # alpha_0(D').
+    a0s = loo_points['alpha0']
+    for label in families:
+      y = loo_points.get(label)
+      if y is None:
+        continue
+      ax.scatter(a0s, y, marker=_LOO_MARKER, s=34, color=cmaps[label](1.0), edgecolors='black',
+                 linewidths=0.6, alpha=0.55, zorder=6)
+    loo_proxy = Line2D([0], [0], marker=_LOO_MARKER, linestyle='none', color='0.5', markeredgecolor='black',
+                        alpha=0.55, markersize=6,
+                        label=f"D\\{{s}}, {len(loo_points['dropped_systems'])} subsets")
+    loo_anchor = (0.95, -0.22) if pool_proxies else (0.95, -0.14)
+    ax.legend(handles=[loo_proxy], fontsize=7, loc='upper center', bbox_to_anchor=loo_anchor,
+              title="leave-one-out (unweighted D') @ alpha_0(D')", title_fontsize=7)
+
+    # Overrides the full-range xlim/ylim set above with a zoom onto just
+    # the loo markers' own (alpha, orientation) span + a small margin --
+    # ONLY for --overlay-loo (this call path), since the markers otherwise
+    # cluster in a narrow band (alpha_0(D') barely moves when dropping one
+    # of K systems) inside an otherwise mostly-empty full-range plot.
+    # Deliberately not applied to the default/--overlay-synth25 plots.
+    fam_vals = [loo_points[label] for label in families if loo_points.get(label) is not None]
+    if fam_vals:
+      y_all = np.concatenate(fam_vals)
+      x_lo, x_hi = float(np.min(a0s)), float(np.max(a0s))
+      y_lo, y_hi = float(np.min(y_all)), float(np.max(y_all))
+      x_margin = max(0.05 * (x_hi - x_lo), 0.01)
+      y_margin = max(0.05 * (y_hi - y_lo), 0.01)
+      ax.set_xlim(x_lo - x_margin, x_hi + x_margin)
+      ax.set_ylim(y_lo - y_margin, y_hi + y_margin)
 
 
 def _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_preset_title, out_dir,
@@ -478,6 +547,15 @@ if __name__ == '__main__':
                             'against ESS(alpha)/K (_plot_family_vs_ess) -- off by default: these used to be '
                             'generated unconditionally on every run as a mandatory side effect of the main '
                             'orientation-vs-alpha plot; now opt-in only, requested explicitly via this flag.')
+  parser.add_argument('--overlay-loo', action=argparse.BooleanOptionalAction, default=False,
+                       help='overlay one marker per (dropped system, family) from '
+                            'compute_scorer_orientation_leave_one_out.py -- for every leave-one-out subset '
+                            "D' = D \\ {s}, that subset's OWN alpha_0(D') (uniform-weight balance) and its "
+                            'A/B/T/J orientation there, using the SAME plain weighted-SPA/PA machinery as '
+                            'the main curves (not the synth25 union metametric). Unlike --overlay-synth25, '
+                            'every point shares ONE marker icon (only color, by family, distinguishes them) '
+                            '-- there is no pool-shape encoding here, just K leave-one-out subsets. '
+                            'Independent of --overlay-synth25; both can be on at once.')
   args = parser.parse_args()
   base = args.dataset
   if args.dial_preset is None:
@@ -558,6 +636,21 @@ if __name__ == '__main__':
       for pool_name in synth25_j_data['pool_names']:
         print(f'  {pool_name}: J={synth25_j_data["pool_J"][pool_name]:.4f}', file=sys.stderr)
 
+  loo_points = None
+  if args.overlay_loo:
+    loo_tag = f'{base}_loo' + ('' if args.metametric == 'spa' else f'_{args.metametric}')
+    loo_path = os.path.join(DATA_DIR, f'scorer_orientation_{loo_tag}.npz')
+    if not os.path.exists(loo_path):
+      sys.exit(f'{loo_path} not found -- run compute_scorer_orientation_leave_one_out.py --dataset {base} '
+                f'--metametric {args.metametric} first')
+    loo_npz = np.load(loo_path)
+    loo_points = {
+        'dropped_systems': [str(s) for s in loo_npz['dropped_systems']],
+        'alpha0': loo_npz['alpha0'],
+        'A': loo_npz['A'], 'B': loo_npz['B'], 'T': loo_npz['T'], 'J': loo_npz['J'],
+    }
+    print(f'Loaded {loo_path}: {len(loo_points["dropped_systems"])} leave-one-out subsets', file=sys.stderr)
+
   K = data['K']
   ess_over_k = data['ess'] / K
   cutoff_frac = _ESS_CUTOFF_ABS / K
@@ -627,7 +720,7 @@ if __name__ == '__main__':
     ax.set_box_aspect(1)  # square PLOT box -- independent of the title/colorbar space around it
     _draw_orientation_axes(ax, data['alphas'], mean_curves, ess_over_k, cmaps, norm, data['center_alpha'],
                             families=families, synth25_pools=synth25_pools,
-                            synth25_metric_label=synth25_metric_label)
+                            synth25_metric_label=synth25_metric_label, loo_points=loo_points)
     strip_ax = ax
     donor_desc = f'{len(data["donors"])} donors'
 
@@ -663,17 +756,19 @@ if __name__ == '__main__':
   grid_suffix = '_union' if args.union_grid else ''
   aspectdonors_suffix = '_aspectdonors' if args.aspect_donors else ('_perdonor' if args.per_donor else '')
   synth25_suffix = '_synth25' if args.overlay_synth25 else ''
+  loo_suffix = '_loo' if args.overlay_loo else ''
   if data.get('T') is not None and data.get('J') is not None:
     # --green-family ABTJ cache (both T and J at once) -- short, distinct
     # name instead of the long auto-chain above (which was designed around
     # exactly one of T/J ever being present at a time, and is already long
     # enough without a 5th thing to disambiguate).
-    plot_path = os.path.join(ARTIFACTS_DIR, f'orientation_{base}_ABTJ{aspectdonors_suffix}{synth25_suffix}.png')
+    plot_path = os.path.join(
+        ARTIFACTS_DIR, f'orientation_{base}_ABTJ{aspectdonors_suffix}{synth25_suffix}{loo_suffix}.png')
   else:
     plot_path = os.path.join(
         ARTIFACTS_DIR,
         f'orientation_vs_alpha_{base}{grid_suffix}{metametric_suffix}{synthesis_suffix}{dial_preset_suffix}'
-        f'{green_family_suffix}{aspectdonors_suffix}{synth25_suffix}.png')
+        f'{green_family_suffix}{aspectdonors_suffix}{synth25_suffix}{loo_suffix}.png')
   fig.savefig(plot_path, dpi=150, bbox_inches='tight')
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)

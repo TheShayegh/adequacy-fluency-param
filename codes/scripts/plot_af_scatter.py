@@ -44,7 +44,7 @@ _GK_CMAP = plt.get_cmap('Greens')
 _GK_COLORS = [_GK_CMAP(z / Z_MAX) for z in Z_LEVELS]
 
 
-def add_gk_ellipses(ax, b, a):
+def add_gk_ellipses(ax, b, a, alpha=1.0, linewidth=1.6):
   """Unfilled ellipses at each Z in Z_LEVELS: the boundary where the joint
   (a,b) Mahalanobis distance from the GK-ROBUST location, under the
   GK-ROBUST covariance (lib.outlier_detection.gk_robust_loc_cov), equals Z.
@@ -61,8 +61,8 @@ def add_gk_ellipses(ax, b, a):
   for z, color in zip(Z_LEVELS, _GK_COLORS):
     width, height = 2 * z * np.sqrt(eigvals[0]), 2 * z * np.sqrt(eigvals[1])
     patch = Ellipse(xy=mean, width=width, height=height, angle=angle,
-                     fill=False, edgecolor=color, linewidth=1.6, zorder=1,
-                     linestyle='solid', label=f'Z={z:g}')
+                     fill=False, edgecolor=color, linewidth=linewidth, zorder=1,
+                     linestyle='solid', label=f'Z={z:g}', alpha=alpha)
     ax.add_patch(patch)
     handles.append(patch)
   return handles
