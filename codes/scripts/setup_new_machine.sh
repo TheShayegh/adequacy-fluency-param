@@ -142,37 +142,51 @@ echo "[setup] external/ data ready"
 #    around the compute calls (never left modified in the repo).
 # ---------------------------------------------------------------------
 DIAL_GRID_FILE="codes/lib/synthetic_scorers.py"
-OLD_DIAL='ABT_DIAL_GRID = tuple(round(-1.5 + 3.0 ** (0.005 * k), 10) for k in range(201))
-ABTJ_J_DIAL_GRID = tuple(round(-3.5 + 4.0 ** (0.005 * k), 10) for k in range(201))'
-NEW_DIAL='ABT_DIAL_GRID = tuple(round(-1.5 + 3.0 ** (0.001 * k), 10) for k in range(1001))
-ABTJ_J_DIAL_GRID = tuple(round(-3.5 + 4.0 ** (0.001 * k), 10) for k in range(1001))'
 
-widen_dial_grid() {
-  .venv/bin/python3 - "$DIAL_GRID_FILE" <<PY
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
+# Regex-based rather than exact-string-match: an earlier version required
+# a byte-exact match of the two committed lines and aborted ("committed
+# dial-grid text not found") on a machine where that text apparently
+# didn't match byte-for-byte despite the committed file being confirmed
+# identical (checked both the local HEAD and origin/main's blob) -- most
+# likely some incidental formatting drift (trailing whitespace, CRLF)
+# from an editor/linter touching the file, not a real content difference.
+# This version only requires each formula's STRUCTURE (name, base offset,
+# multiplier base -- e.g. "ABT_DIAL_GRID = tuple(round(-1.5 + 3.0 ** (")
+# -- to appear exactly once, and only rewrites the two numeric params
+# (step, range) inside it; tolerant of whitespace/line-ending variation
+# elsewhere, but still aborts loudly if the formula's shape itself has
+# genuinely changed, rather than silently patching the wrong thing.
+# Verified: round-trips to byte-identical output, and survives a
+# trailing-whitespace + CRLF-line-ending variant of the file.
+set_dial_grid() {
+  local step="$1" n="$2"
+  .venv/bin/python3 - "$DIAL_GRID_FILE" "$step" "$n" <<'PY'
+import re, pathlib, sys
+
+path, step, n = sys.argv[1], sys.argv[2], sys.argv[3]
+p = pathlib.Path(path)
 src = p.read_text()
-old = """$OLD_DIAL"""
-new = """$NEW_DIAL"""
-if old not in src:
-    sys.exit(f"{p}: committed dial-grid text not found -- it may have changed "
-             "since this script was written; check codes/lib/synthetic_scorers.py "
-             "by hand before patching")
-p.write_text(src.replace(old, new))
+out = src
+for name, base, mult in [("ABT_DIAL_GRID", "-1.5", "3.0"), ("ABTJ_J_DIAL_GRID", "-3.5", "4.0")]:
+    pattern = re.compile(
+        r"(" + re.escape(f"{name} = tuple(round({base} + {mult} ** (") + r")"
+        r"[0-9.]+"
+        r"(" + re.escape(" * k), 10) for k in range(") + r")"
+        r"\d+"
+        r"(" + re.escape("))") + r")"
+    )
+    new_out, count = pattern.subn(rf"\g<1>{step}\g<2>{n}\g<3>", out)
+    if count != 1:
+        sys.exit(f"{path}: expected exactly 1 occurrence of {name}'s dial-grid formula "
+                  f"(base={base}, mult={mult}), found {count} -- the formula's structure "
+                  "may have changed beyond just whitespace; check codes/lib/synthetic_scorers.py by hand")
+    out = new_out
+p.write_text(out)
 PY
 }
 
-revert_dial_grid() {
-  .venv/bin/python3 - "$DIAL_GRID_FILE" <<PY
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-src = p.read_text()
-old = """$OLD_DIAL"""
-new = """$NEW_DIAL"""
-if new in src:
-    p.write_text(src.replace(new, old))
-PY
-}
+widen_dial_grid() { set_dial_grid 0.001 1001; }
+revert_dial_grid() { set_dial_grid 0.005 201; }
 
 # Always revert on exit -- success, error, or Ctrl-C -- so the repo never
 # ends up with the widened grid committed by accident.
