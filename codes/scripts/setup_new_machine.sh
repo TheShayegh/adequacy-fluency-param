@@ -61,32 +61,50 @@ echo "[setup] dependencies installed"
 #    the original external/ for unrelated work.
 # ---------------------------------------------------------------------
 mkdir -p external
-
 mkdir -p external/mt-metrics-eval-data
-if [ ! -f external/mt-metrics-eval-data/mt-metrics-eval-v2.tgz ]; then
-  # NOT a git repo -- this is a plain data release from the official
-  # google-research/mt-metrics-eval toolkit (see external/mt-metrics-eval/
-  # README.md's own download instructions), a straight file download off
-  # a GCS bucket. An earlier version of this script wrongly `git clone`d
-  # https://github.com/TheShayegh/wmt26.git here instead: that URL is
-  # actually THIS project's own origin remote (confirmed via `git remote
-  # -v` at the project root), not a data repo -- `git -C external/mt-
-  # metrics-eval-data remote -v` was silently walking UP to the enclosing
-  # MindWhichBird checkout because this directory has no `.git` of its
-  # own, and that misread got baked into the clone command. Fixed to a
-  # plain download, which is also just simpler for a non-git data drop.
+
+# NOT a git repo -- this is a plain data release from the official
+# google-research/mt-metrics-eval toolkit (see external/mt-metrics-eval/
+# README.md's own download instructions), a straight file download off a
+# GCS bucket. An earlier version of this script wrongly `git clone`d
+# https://github.com/TheShayegh/wmt26.git here instead: that URL is
+# actually THIS project's own origin remote (confirmed via `git remote
+# -v` at the project root), not a data repo -- `git -C external/mt-
+# metrics-eval-data remote -v` was silently walking UP to the enclosing
+# MindWhichBird checkout because this directory has no `.git` of its own,
+# and that misread got baked into the clone command. Fixed to a plain
+# download, which is also just simpler for a non-git data drop.
+#
+# storage.googleapis.com is commonly blocked on corporate/restricted
+# networks even when github.com itself is reachable (different domain,
+# often not on the same allowlist) -- if `curl` below fails for that
+# reason, the fallback that worked on one such machine already was:
+#   1. On a machine WITH GCS access, extract just the (year_dir, language
+#      pair) subtrees actually needed -- see codes/lib/dataset_dirs.py
+#      for which pairs each dataset name maps to, and note several
+#      datasets are excluded from this project entirely (real_systems()
+#      returns 0 for ende20/zhen20/ende23/enru22 under the committed
+#      screen, lib/consistency.py) so their data was never packaged.
+#   2. Zip each needed subtree (preserving the
+#      external/mt-metrics-eval-data/mt-metrics-eval-v2/... relative
+#      path from the project root, so `unzip` on the other end drops it
+#      in the right place with no manual directory surgery) and attach
+#      them as assets on a GitHub Release (public repo: plain `curl -L`
+#      works with no auth; private repo: needs a token, more setup).
+#   3. On the restricted machine: `curl -L -o x.zip <release-asset-url>`
+#      then `unzip x.zip` from the project root, for each zip -- this
+#      populates external/mt-metrics-eval-data/mt-metrics-eval-v2/
+#      piecemeal instead of via the single tgz, which is exactly what
+#      the check below is written to accept as equally valid.
+if [ -d external/mt-metrics-eval-data/mt-metrics-eval-v2 ] \
+    && [ -n "$(ls -A external/mt-metrics-eval-data/mt-metrics-eval-v2 2>/dev/null)" ]; then
+  echo "[setup] mt-metrics-eval-v2/ already present (full download or manually-transferred subset), skipping"
+else
   echo "[setup] downloading mt-metrics-eval-v2.tgz (~870MB) from the official GCS bucket"
   curl -L --fail -o external/mt-metrics-eval-data/mt-metrics-eval-v2.tgz \
       https://storage.googleapis.com/mt-metrics-eval/mt-metrics-eval-v2.tgz
-else
-  echo "[setup] mt-metrics-eval-v2.tgz already downloaded, skipping"
-fi
-
-if [ ! -d external/mt-metrics-eval-data/mt-metrics-eval-v2 ]; then
   echo "[setup] extracting mt-metrics-eval-v2.tgz (~2.3GB unpacked)"
   tar xzf external/mt-metrics-eval-data/mt-metrics-eval-v2.tgz -C external/mt-metrics-eval-data
-else
-  echo "[setup] mt-metrics-eval-v2/ already extracted, skipping"
 fi
 
 if [ ! -d external/wmt-mqm-human-evaluation/.git ]; then
