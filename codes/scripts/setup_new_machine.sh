@@ -47,26 +47,39 @@ echo "[setup] .venv python: $PYVER (developed/tested on 3.9)"
 echo "[setup] dependencies installed"
 
 # ---------------------------------------------------------------------
-# 2. External data repos (gitignored -- not part of this project's own
-#    git history, so a fresh clone of the project itself has none of
-#    this). Only the two repos actually READ at runtime by codes/ are
-#    cloned here -- mt-metrics-eval-data (system/metric scores) and
-#    wmt-mqm-human-evaluation (human MQM annotations). This project's
-#    other external/ checkouts on the original machine (mt-metrics-eval
-#    itself, wmt25-general-mt, wmt25-mteval) are cited in a few comments
-#    for algorithm provenance but never imported or read at runtime by
-#    this pipeline, so they're skipped here (~2.7GB saved). Add them the
-#    same way below if you want full parity with the original external/
-#    for unrelated work.
+# 2. External data (gitignored -- not part of this project's own git
+#    history, so a fresh clone of the project itself has none of this).
+#    Only what's actually READ at runtime by codes/ is fetched here:
+#    mt-metrics-eval-data (system/metric scores -- a plain GCS download,
+#    NOT a git repo, see the comment at its own step below) and the
+#    wmt-mqm-human-evaluation git repo (human MQM annotations). This
+#    project's other external/ checkouts on the original machine
+#    (mt-metrics-eval itself, wmt25-general-mt, wmt25-mteval) are cited
+#    in a few comments for algorithm provenance but never imported or
+#    read at runtime by this pipeline, so they're skipped here (~2.7GB
+#    saved). Add them the same way below if you want full parity with
+#    the original external/ for unrelated work.
 # ---------------------------------------------------------------------
 mkdir -p external
 
-if [ ! -d external/mt-metrics-eval-data/.git ]; then
-  echo "[setup] cloning mt-metrics-eval-data"
-  git clone https://github.com/TheShayegh/wmt26.git external/mt-metrics-eval-data
-  git -C external/mt-metrics-eval-data checkout f2405c1f8b9e0c9d563f7fa0c6740ccbc842f4db
+mkdir -p external/mt-metrics-eval-data
+if [ ! -f external/mt-metrics-eval-data/mt-metrics-eval-v2.tgz ]; then
+  # NOT a git repo -- this is a plain data release from the official
+  # google-research/mt-metrics-eval toolkit (see external/mt-metrics-eval/
+  # README.md's own download instructions), a straight file download off
+  # a GCS bucket. An earlier version of this script wrongly `git clone`d
+  # https://github.com/TheShayegh/wmt26.git here instead: that URL is
+  # actually THIS project's own origin remote (confirmed via `git remote
+  # -v` at the project root), not a data repo -- `git -C external/mt-
+  # metrics-eval-data remote -v` was silently walking UP to the enclosing
+  # MindWhichBird checkout because this directory has no `.git` of its
+  # own, and that misread got baked into the clone command. Fixed to a
+  # plain download, which is also just simpler for a non-git data drop.
+  echo "[setup] downloading mt-metrics-eval-v2.tgz (~870MB) from the official GCS bucket"
+  curl -L --fail -o external/mt-metrics-eval-data/mt-metrics-eval-v2.tgz \
+      https://storage.googleapis.com/mt-metrics-eval/mt-metrics-eval-v2.tgz
 else
-  echo "[setup] external/mt-metrics-eval-data already present, skipping clone"
+  echo "[setup] mt-metrics-eval-v2.tgz already downloaded, skipping"
 fi
 
 if [ ! -d external/mt-metrics-eval-data/mt-metrics-eval-v2 ]; then
