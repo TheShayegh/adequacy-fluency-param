@@ -95,6 +95,11 @@ if __name__ == '__main__':
   parser.add_argument('--J', action=argparse.BooleanOptionalAction, default=False,
                        help='compute the J (Joint) family instead of A/B/T -- see module docstring.')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
+  parser.add_argument('--workers', type=int, default=1,
+                       help='parallel worker processes (ProcessPoolExecutor) for the per-donor loop -- each '
+                            'donor\'s permutation-test sweep is independent, no alpha sweep to amortize the '
+                            'cost against unlike compute_scorer_orientation_vs_alpha.py, so this is usually '
+                            'the slower of the two computations. Default: 1 (sequential, original behavior).')
   args = parser.parse_args()
   base = args.dataset
   metametric_name = f'{args.metametric}_synth25'
@@ -125,6 +130,7 @@ if __name__ == '__main__':
   if args.J:
     pool_orientation = dataset_synth25_orientation_J_all_pools(
         base, systems, root=ROOT, metametric_name=metametric_name, dial_grid=j_dial_grid, progress=True,
+        workers=args.workers,
     )
     for pool_name in POOL_BLOCKS:
       print(f'{base}: pool {pool_name} joint={pool_orientation[pool_name]:.4f}', file=sys.stderr)
@@ -143,7 +149,7 @@ if __name__ == '__main__':
 
     pool_orientation = dataset_synth25_orientation_all_pools(
         base, systems, root=ROOT, metametric_name=metametric_name, dial_grid=dial_grid,
-        synthesis=args.synthesis, progress=True,
+        synthesis=args.synthesis, progress=True, workers=args.workers,
     )
     for pool_name in POOL_BLOCKS:
       o = pool_orientation[pool_name]

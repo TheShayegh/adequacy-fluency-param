@@ -49,6 +49,7 @@ reordering).
 """
 
 import argparse
+import concurrent.futures as cf
 import os
 import sys
 import time
@@ -57,7 +58,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 
-from lib.alpha import alpha_0, alpha_min_max, union_alpha_grid
+from lib.alpha import alpha_0, alpha_min_max, union_alpha_grid, union_alpha_grid_beta
 from lib.consistency import real_scorers, real_systems
 from lib.reweighted_consistency import solve_w_for_datasets
 from lib.synthetic_scorer_alpha_grid import ASPECT_DONORS, alpha_grid_around, donor_alpha_dial_grid
@@ -73,6 +74,31 @@ from mwb.mqm_scoring import load_system_scores
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 DATA_DIR = os.path.join(ROOT, 'artifacts', 'data')
 
+
+def _compute_one_donor(job):
+  """One donor's worker-process body for --workers > 1 (ProcessPoolExecutor):
+  the same two donor_alpha_dial_grid calls the sequential loop makes below,
+  factored out to a module-level function so it's importable/picklable under
+  macOS's spawn start method. Donors are independent given the already-
+  solved w_by_alpha (read-only, shared by value across processes), so this
+  parallelizes with no cross-donor coordination needed. Returns (donor,
+  orient_dict, None) on success or (donor, None, skip_reason) on skip --
+  mirrors the two SKIPPED cases the sequential loop prints inline."""
+  base, donor, systems, w_by_alpha, dial_grid, metametric, synthesis, green_family, j_dial_grid = job
+  grids = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=dial_grid,
+                                 metametric=metametric, synthesis=synthesis)
+  if grids is None:
+    return donor, None, 'insufficient segment coverage'
+  orient = donor_orientation_by_alpha(grids)
+  if green_family in ('Jneg', 'ABTJ'):
+    grids_j = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=j_dial_grid,
+                                     metametric=metametric, synthesis='offset')
+    if grids_j is None:
+      return donor, None, 'insufficient coverage for the offset-J overlay'
+    orient['J'] = donor_orientation_by_alpha(grids_j)['J']
+  return donor, orient, None
+
+
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('--dataset', default='ende21')
@@ -86,6 +112,13 @@ if __name__ == '__main__':
                             '[alpha_min, alpha_max] sweep at --step (lib.alpha.union_alpha_grid) instead '
                             'of --full-range/the alpha_0(D)-centered window. Default: True (the committed '
                             'setup, matching --synthesis additive_mean/--green-family ABTJ below).')
+  parser.add_argument('--beta-grid', action=argparse.BooleanOptionalAction, default=False,
+                       help='like --union-grid (the alpha_ij union stays), but the uniform-sweep half is '
+                            'evenly spaced in BETA space instead of alpha space (lib.alpha.'
+                            'union_alpha_grid_beta/alpha_grid_for_beta, beta = 1/(1+sqrt(1/alpha-1)) -- see '
+                            'plot_scorer_orientation_vs_alpha.py --beta-axis). --step is read as the beta '
+                            'stepsize under this mode. Takes priority over --union-grid/--full-range when '
+                            'set. Default: False.')
   parser.add_argument('--metametric', choices=['spa', 'pa'], default='spa',
                        help='weighted meta-metric to score each dial/alpha cell with')
   parser.add_argument('--synthesis', choices=['offset', 'additive', 'additive_mean'], default='additive_mean',
@@ -116,6 +149,15 @@ if __name__ == '__main__':
                             'synthetic_scorers.ABT_DIAL_GRID, J on ABTJ_J_DIAL_GRID -- see module docstring '
                             'for both.')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
+  parser.add_argument('--workers', type=int, default=1,
+                       help='parallel worker processes (ProcessPoolExecutor), applied to BOTH expensive '
+                            'steps: the solve_w_for_datasets alpha-solving pass (lib.reweighted_consistency, '
+                            'one process per (dataset, alpha) -- often the larger cost, since solve_w_exact\'s '
+                            'exhaustive-enumeration fallback can dominate on dense/near-breakpoint alpha '
+                            'grids) and the per-donor loop below (_compute_one_donor, one process per donor). '
+                            'Both are independent-job loops with no cross-job coordination needed. Default: 1 '
+                            '(sequential, the original behavior -- opt-in only, since ProcessPoolExecutor '
+                            'changes stderr interleaving/ordering).')
   args = parser.parse_args()
   base = args.dataset
   if args.dial_preset is None:
@@ -136,7 +178,9 @@ if __name__ == '__main__':
   a_D, b_D = df.loc[systems, 'a'].values, df.loc[systems, 'b'].values
   center_alpha = alpha_0(a_D, b_D)
   alpha_lo, alpha_hi = alpha_min_max(a_D, b_D)
-  if args.union_grid:
+  if args.beta_grid:
+    alphas = union_alpha_grid_beta(a_D, b_D, beta_stepsize=args.step)
+  elif args.union_grid:
     alphas = union_alpha_grid(a_D, b_D, step=args.step)
   elif args.full_range:
     alphas = full_range_alphas(alpha_lo, alpha_hi, args.step)
@@ -145,7 +189,8 @@ if __name__ == '__main__':
   print(f'{base}: K={K} systems, alpha_0(D)={center_alpha:.4f}, alpha grid ({len(alphas)} pts): '
         f'{[round(a, 4) for a in alphas]}', file=sys.stderr)
 
-  w_cache = solve_w_for_datasets([base], alphas, root=ROOT, systems_by_dataset={base: systems})
+  w_cache = solve_w_for_datasets([base], alphas, root=ROOT, systems_by_dataset={base: systems},
+                                  workers=args.workers, progress=True)
   w_by_alpha = {a: w_cache[(base, a)].w for a in alphas}
   ess_by_alpha = np.array([w_cache[(base, a)].ess for a in alphas])
   print(f'{base}: ESS(alpha) range [{ess_by_alpha.min():.2f}, {ess_by_alpha.max():.2f}] of [1, {K}]',
@@ -165,25 +210,47 @@ if __name__ == '__main__':
   n = len(candidates)
   t0 = time.time()
   orient_by_donor = {}
-  for i, donor in enumerate(candidates, 1):
-    grids = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=dial_grid,
-                                   metametric=args.metametric, synthesis=args.synthesis)
-    if grids is None:
-      print(f'[{i}/{n}] SKIPPED {donor} (insufficient segment coverage)', file=sys.stderr)
-      continue
-    orient = donor_orientation_by_alpha(grids)
-    if args.green_family in ('Jneg', 'ABTJ'):
-      j_dial_grid = ABTJ_J_DIAL_GRID if args.green_family == 'ABTJ' else NEG_J_DIAL_GRID
-      grids_j = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=j_dial_grid,
-                                       metametric=args.metametric, synthesis='offset')
-      if grids_j is None:
-        print(f'[{i}/{n}] SKIPPED {donor} (insufficient coverage for the offset-J overlay)', file=sys.stderr)
+  j_dial_grid = (ABTJ_J_DIAL_GRID if args.green_family == 'ABTJ' else NEG_J_DIAL_GRID) \
+      if args.green_family in ('Jneg', 'ABTJ') else None
+  if args.workers > 1:
+    # Parallel path: donors are independent given the already-solved
+    # w_by_alpha, so _compute_one_donor's two donor_alpha_dial_grid calls
+    # (main + the ABTJ/Jneg offset-J extra) run one donor per worker
+    # process. Only 10s-100s of donors here (real_scorers-screened), so --
+    # unlike compute_type8_icc_upsample.py's tens-of-thousands-of-jobs
+    # bounded-in-flight submission -- submitting every job at once is safe.
+    jobs = [(base, donor, systems, w_by_alpha, dial_grid, args.metametric, args.synthesis, args.green_family,
+             j_dial_grid) for donor in candidates]
+    done = 0
+    with cf.ProcessPoolExecutor(max_workers=args.workers) as ex:
+      for donor, orient, skip_reason in ex.map(_compute_one_donor, jobs):
+        done += 1
+        if orient is None:
+          print(f'[{done}/{n}] SKIPPED {donor} ({skip_reason})', file=sys.stderr)
+          continue
+        orient_by_donor[donor] = orient
+        elapsed = time.time() - t0
+        eta = elapsed / done * (n - done)
+        print(f'[{done}/{n}] computed {donor} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
+  else:
+    for i, donor in enumerate(candidates, 1):
+      grids = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=dial_grid,
+                                     metametric=args.metametric, synthesis=args.synthesis)
+      if grids is None:
+        print(f'[{i}/{n}] SKIPPED {donor} (insufficient segment coverage)', file=sys.stderr)
         continue
-      orient['J'] = donor_orientation_by_alpha(grids_j)['J']
-    orient_by_donor[donor] = orient
-    elapsed = time.time() - t0
-    eta = elapsed / i * (n - i)
-    print(f'[{i}/{n}] computed {donor} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
+      orient = donor_orientation_by_alpha(grids)
+      if args.green_family in ('Jneg', 'ABTJ'):
+        grids_j = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=j_dial_grid,
+                                         metametric=args.metametric, synthesis='offset')
+        if grids_j is None:
+          print(f'[{i}/{n}] SKIPPED {donor} (insufficient coverage for the offset-J overlay)', file=sys.stderr)
+          continue
+        orient['J'] = donor_orientation_by_alpha(grids_j)['J']
+      orient_by_donor[donor] = orient
+      elapsed = time.time() - t0
+      eta = elapsed / i * (n - i)
+      print(f'[{i}/{n}] computed {donor} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
 
   print(f'{base}: {len(orient_by_donor)}/{n} donors used', file=sys.stderr)
 

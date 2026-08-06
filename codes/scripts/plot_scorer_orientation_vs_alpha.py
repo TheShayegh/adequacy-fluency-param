@@ -13,14 +13,14 @@ then a 2-segment cubic Hermite spline ramp (SplineReliabilityNorm, tuned via
 codes/scripts/plot_ess_opacity_curve.py's --shape spline) up to opaque dark
 blue/red at ESS=K -- plus a dashed reference at 0.5 (no systematic
 preference) and a dotted vertical line at alpha_0(D). Per-donor shadow
-curves are still computed and cached (compute_scorer_orientation_vs_
-alpha.py's A/B matrices) but deliberately not drawn here for now -- reserved
-for a later use.
+curves (compute_scorer_orientation_vs_alpha.py's A/B/T/J matrices, already
+cached, no recomputation) are optionally drawn behind the mean via
+--shadow-donors -- see _draw_orientation_axes's shadow_curves param.
 
 Usage: python codes/scripts/plot_scorer_orientation_vs_alpha.py [--dataset ende21]
            [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa]
            [--synthesis offset|additive|additive_mean] [--dial-preset linear|geometric]
-           [--aspect-donors | --per-donor] [--tag TAG]
+           [--aspect-donors | --per-donor] [--shadow-donors] [--tag TAG]
 (same grid/metametric/synthesis/dial-preset flags as the compute script --
 used only to derive the matching cache filename via lib.
 synthetic_scorer_orientation.orientation_tag/union_grid_tag, unless --data
@@ -45,6 +45,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.lines import Line2D
 
@@ -53,6 +54,7 @@ from lib.synth25_orientation import load_synth25_pools, load_synth25_pools_J
 from lib.synth25_orientation import pools_tag as synth25_pools_tag
 from lib.synth25_orientation import pools_tag_J as synth25_pools_tag_J
 from lib.synthetic_scorer_alpha_grid import ASPECT_DONORS
+from lib.alpha import alpha_to_beta
 from lib.synthetic_scorer_orientation import load_orientation_data, orientation_tag, union_grid_tag
 from lib.synthetic_scorers import default_dial_preset
 
@@ -64,6 +66,12 @@ _PANEL_TITLES = {
     'A': 'Adequacy orientation (A-family)', 'B': 'Fluency orientation (B-family)',
     'T': 'AllMQM orientation (T-family)', 'J': 'Joint orientation (J-family)',
 }
+# --poster's short legend labels -- everywhere else in this file uses
+# _PANEL_TITLES; this is purely a presentation-render relabeling of the
+# SAME four families (A/B/T/J), not a new taxonomy.
+_POSTER_PANEL_TITLES = {
+    'A': 'Adequacy family', 'B': 'Fluency family', 'T': 'Total family', 'J': 'Orthigonal family',
+}
 # Light/dark pairs per family -- dark end matches the flat colors used
 # elsewhere in this project (lib.spa_plane's adequacy=blue/fluency=red
 # convention); light end is the "type 2" style's own LIGHT_BLUE, mirrored
@@ -72,10 +80,26 @@ _PANEL_TITLES = {
 # conditions on both aspects jointly rather than either alone), which used
 # to get them the same dark green when a cache only ever had one of the
 # two -- --green-family ABTJ caches now have BOTH T and J at once, so they
-# need visually distinct colors: J stays dark green, T gets dark gold
+# need visually distinct colors: T stays dark green, J gets dark gold
 # (darkgoldenrod), chosen to read clearly against green/blue/red at the
 # same low marker alpha.
 _DARK_COLOR = {'A': (0.03, 0.15, 0.35), 'B': (0.35, 0.03, 0.05), 'T': (0.05, 0.30, 0.05), 'J': (0.72, 0.53, 0.04)}
+# --poster's own A/T base colors: pushed further apart in hue (purer blue,
+# purer green -- less of the shared low-saturation blue-green midtone that
+# made _DARK_COLOR's A/T converge once lightened for the bright markers
+# below) while keeping blue and green as each family's main color, per
+# request.
+_POSTER_DARK_COLOR = {'A': (0.0, 0.05, 0.65), 'B': (0.35, 0.03, 0.05), 'T': (0.0, 0.42, 0.0), 'J': (0.72, 0.53, 0.04)}
+
+
+def _lighten(rgb, amount=0.6):
+  """Blends `rgb` toward white by `amount` (0=unchanged, 1=white) -- used
+  by --poster to lighten the dark/high-ESS end of the family colors (dots,
+  legend swatches, pool markers), which otherwise read as too saturated at
+  --poster's much bigger marker sizes."""
+  return tuple(c + (1.0 - c) * amount for c in rgb)
+
+
 _MEAN_RED = '#c81e1e'
 _ESS_FRAC_BIN_WIDTH = 0.02
 
@@ -90,9 +114,9 @@ _ESS_FRAC_BIN_WIDTH = 0.02
 _POOL_MARKERS = {
     'real+adeq+flu': 'o', 'real+adeq': '^', 'real+flu': 's', 'adeq+flu': 'D', 'flu': 'v', 'adeq': 'P',
 }
-_POOL_MARKER_SIZE_LARGE = 220 / 3
-_POOL_MARKER_SIZE_DEFAULT = 90 / 3
-_POOL_MARKER_SIZE = {'real+adeq+flu': _POOL_MARKER_SIZE_LARGE}
+_POOL_MARKER_SIZE_LARGE = 45
+_POOL_MARKER_SIZE_DEFAULT = 55
+_POOL_MARKER_SIZE = {'real+adeq+flu': _POOL_MARKER_SIZE_LARGE+10, 'adeq+flu':_POOL_MARKER_SIZE_LARGE-5, 'real+flu':_POOL_MARKER_SIZE_LARGE-5}
 _FAMILY_FILE_PREFIX = {'A': 'adequacy', 'B': 'fluency', 'T': 'allmqm', 'J': 'joint'}
 
 
@@ -188,10 +212,10 @@ class SplineReliabilityNorm(Normalize):
     return self.vmin + t * (self.vmax - self.vmin)
 
 
-def _ess_over_k_cmap(dark, top_alpha=1.0):
-  """Reliability colormap: a single ramp from fully transparent to opaque
-  `dark`, with all of the cutoff/easing shape handled by
-  SmoothReliabilityNorm rather than by extra color stops (type 2's
+def _ess_over_k_cmap(dark, top_alpha=1.0, bottom_alpha=0.035):
+  """Reliability colormap: a single ramp from nearly-but-not-quite
+  transparent to opaque `dark`, with all of the cutoff/easing shape handled
+  by SmoothReliabilityNorm rather than by extra color stops (type 2's
   original style, _obsolete_type1_type2_plot_styles.py's render_type2_
   figure, inserted a light-colored "landmark accent" stop partway up,
   which -- once the transparency cutoff moved to K/3 -- produced a
@@ -199,14 +223,20 @@ def _ess_over_k_cmap(dark, top_alpha=1.0):
   shadow lines reuse the same reliability gradient at a lower opacity
   ceiling than the mean curve, rather than flattening it with a uniform
   Artist-level alpha (which would overwrite the colormap's own
-  per-segment alpha instead of combining with it)."""
+  per-segment alpha instead of combining with it). `bottom_alpha` (default
+  0.035, not 0.0): the extreme-low-ESS end used to be fully transparent --
+  literally invisible against a white axes background -- which reads as
+  "no point drawn" rather than "a point too unreliable to trust"; a small
+  nonzero floor keeps it a deliberately faint smudge instead, still hard to
+  read at a glance (that's the point), just not literally absent."""
   return LinearSegmentedColormap.from_list('ess_over_k', [
-      (0.0, (*dark, 0.0)),
+      (0.0, (*dark, bottom_alpha)),
       (1.0, (*dark, top_alpha)),
   ])
 
 
-def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs, x_offset=0.012, label=True):
+def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs, x_offset=0.012, label=True, fontsize=8,
+                             border=True):
   """A manually-drawn reliability legend strip, since matplotlib's
   fig.colorbar always renders a continuous mappable's gradient by
   sampling the colormap UNIFORMLY (norm only moves tick positions, never
@@ -230,12 +260,13 @@ def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs, x_offset=0.012, 
   strip_ax.set_xticks([])
   strip_ax.set_ylim(cutoff_abs, K)
   for spine in strip_ax.spines.values():
-    spine.set_linewidth(0.6)
+    spine.set_linewidth(0.6 if border else 0.0)
+    spine.set_visible(border)
   if label:
     strip_ax.set_yticks([cutoff_abs, K])
-    strip_ax.set_yticklabels([f'{cutoff_abs:g}', 'K'])
+    strip_ax.set_yticklabels([f'{cutoff_abs:g}', 'K'], fontsize=fontsize)
     strip_ax.yaxis.tick_right()
-    strip_ax.set_ylabel('Reliability (ESS)', fontsize=8, rotation=270, labelpad=10)
+    strip_ax.set_ylabel('Reliability (ESS)', fontsize=fontsize, rotation=270, labelpad=10)
     strip_ax.yaxis.set_label_position('right')
   else:
     strip_ax.set_yticks([])
@@ -276,19 +307,72 @@ def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
              linewidths=0, zorder=zorder)
 
 
+def _add_ess_colored_line(ax, alphas, ys, ess_over_k, cmap, norm, linewidth, zorder):
+  """Connecting line whose per-segment color intensity matches the
+  ESS-colored dots it links (_add_ess_colored_dots) -- each segment
+  between two adjacent (in alpha) finite points is colored by the AVERAGE
+  of its two endpoints' reliability color, pre-blended against white and
+  painted fully OPAQUE, same technique and same reason as the dots: no
+  alpha channel left to stack means no compositing-darkens-overlaps
+  artifact. This sidesteps _add_ess_colored_dots's own abandoned-
+  LineCollection attempt in a different way than that docstring's fix
+  (plain per-point dots): the seam/gap problem described there was from
+  TRANSLUCENT adjacent segments with mismatched join rendering, not from
+  drawing lines at all -- opaque colors plus round caps/joins (no butt-cap
+  gap at the joint) avoids it. Segments only connect adjacent FINITE
+  points -- a gap in the data breaks the line rather than interpolating
+  across it."""
+  alphas = np.asarray(alphas, dtype=float)
+  ys = np.asarray(ys, dtype=float)
+  ess_over_k = np.asarray(ess_over_k, dtype=float)
+  order = np.argsort(alphas)
+  xs, ys, ess = alphas[order], ys[order], ess_over_k[order]
+  finite = np.isfinite(ys)
+  xs, ys, ess = xs[finite], ys[finite], ess[finite]
+  if len(xs) < 2:
+    return
+
+  rgba = np.asarray(cmap(norm(ess)))
+  opacity = rgba[:, 3]
+  white = np.ones((len(opacity), 3))
+  solid_rgb = opacity[:, None] * rgba[:, :3] + (1 - opacity[:, None]) * white
+  seg_colors = 0.5 * (solid_rgb[:-1] + solid_rgb[1:])
+
+  pts = np.column_stack([xs, ys])
+  segments = np.stack([pts[:-1], pts[1:]], axis=1)
+  lc = LineCollection(segments, colors=seg_colors, linewidths=linewidth, zorder=zorder,
+                       capstyle='round', joinstyle='round')
+  ax.add_collection(lc)
+
+
 _LOO_MARKER = 'X'
 
 
 def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, center_alpha, families=('A', 'B'),
-                            synth25_pools=None, synth25_metric_label='', loo_points=None):
+                            synth25_pools=None, synth25_metric_label='', loo_points=None, shadow_curves=None,
+                            xlabel='alpha (meta-evaluation balance)', ylabel='orientation score', poster=False,
+                            line_cmaps=None):
   """`families` (A=adequacy, B=fluency, and/or the cache's third family --
   T=orientation-neutral All-MQM or J=orientation-neutral Joint, whichever
   is present) overlaid on one axes -- distinct by hue (cmaps['A']=blue,
   cmaps['B']=red, cmaps['T']/cmaps['J']=green), sharing the x-axis (alpha),
   the y-axis (orientation score), and the reliability norm (ESS depends
-  only on alpha, not on family). Per-donor shadow lines are computed and
-  stored (compute_scorer_orientation_vs_alpha.py's A/B/T-or-J matrices) but
-  deliberately not drawn here for now -- reserved for a later use.
+  only on alpha, not on family).
+
+  shadow_curves: optional {family: (n_donors, n_alpha)} -- the SAME raw
+  per-donor matrices compute_scorer_orientation_vs_alpha.py already caches
+  (data['A']/data['B']/data['T']/data['J']), no recomputation needed. Each
+  donor row is drawn as ONE plain, constant-alpha line (not the mean dots'
+  per-point ESS coloring -- a LineCollection with per-segment alpha hits
+  the compositing bug _add_ess_colored_dots's own docstring describes, and
+  30-ish donors' worth of per-alpha dots would just be visual noise, not a
+  legible line). Constant alpha instead means overlapping donor lines
+  compositing darker IS the intended signal here (more donors agreeing at
+  that (alpha, orientation) cell), unlike the bugs elsewhere in this file
+  that per-segment/per-dot alpha stacking was carefully engineered away
+  from. Drawn at low zorder, under the mean dots, so the bold mean curve
+  stays the visual foreground and the shadows read as spread/dispersion
+  behind it.
 
   synth25_pools: optional {pool_name: {'alpha0': .., 'A': .., 'B': ..,
   'T': .., 'J': ..}} from lib.synth25_orientation.load_synth25_pools (one
@@ -318,50 +402,107 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   machinery as the main curves, not the synth25 union metametric. Unlike
   the pool markers, every point shares ONE marker icon (_LOO_MARKER) --
   only color (by family) distinguishes them, since there's no shape-worthy
-  categorical structure across K roughly-similar leave-one-out subsets."""
-  if loo_points:
-    # Thin connecting line under the dots -- ONLY for the --overlay-loo
-    # plot (this branch), not the default/--overlay-synth25 plots: a plain
-    # single-stroke, constant-color line (no per-segment opacity) doesn't
-    # hit the LineCollection alpha-compositing bug _add_ess_colored_dots's
-    # own docstring describes (that was about blending many independently
-    # translucent segments, not one uniform stroke), and the zoomed loo
-    # view is dense/narrow enough that a guide line between the already-
-    # visible dots is legible rather than misleading the way it would be
-    # across the default plot's full alpha range.
+  categorical structure across K roughly-similar leave-one-out subsets.
+
+  poster (default False): scales up dot/marker/line sizes and every font
+  (axis labels, tick labels, legend text/titles) for a presentation-size
+  render -- everything else about the plot (data, colors, layout logic)
+  is unchanged, just bigger.
+
+  line_cmaps: optional separate colormap dict for the connecting lines
+  only (dots/legend/pool markers keep using `cmaps`) -- lets the curves
+  render in a DARKER base color than the (brighter) markers instead of
+  sharing one cmap for both. Defaults to `cmaps` (old behavior, single
+  shared color per family) when not given."""
+  line_cmaps = line_cmaps or cmaps
+  dot_size = 20 if poster else 10
+  # Wider than the dots' own diameter (dot_size is scatter-marker AREA in
+  # points^2, so diameter ~= 2*sqrt(dot_size/pi) ~= 18pt at 260) -- at
+  # line_width <= dot diameter the dots (drawn on top, higher zorder)
+  # fully occlude the line beneath them everywhere they don't overlap a
+  # neighboring dot's gap, which given how densely these alpha grids are
+  # sampled is essentially nowhere; wide enough to peek out past each
+  # dot's edge as a visible dark outline/halo instead.
+  line_width = 8.0 if poster else 1.0
+  pool_marker_mult = 7.5 if poster else 1.0
+  legend_fontsize = 24 if poster else 8
+  legend_title_fontsize = 22 if poster else 7
+  axis_label_fontsize = 32 if poster else None
+  tick_label_fontsize = 30 if poster else None
+
+  # Thin connecting line under the dots, on every plot, colored the same
+  # ESS-reliability gradient as the dots themselves (_add_ess_colored_line)
+  # -- used to be ONLY for --overlay-loo and a flat constant-alpha stroke;
+  # see that function's own docstring for why a per-segment gradient here
+  # doesn't hit the seam/gap problem _add_ess_colored_dots abandoned a
+  # LineCollection over.
+  for label in families:
+    _add_ess_colored_line(ax, alphas, mean_curves[label], ess_over_k, line_cmaps[label], norm, linewidth=line_width,
+                           zorder=3)
+
+  if shadow_curves:
     order = np.argsort(alphas)
     xs_sorted = np.asarray(alphas)[order]
     for label in families:
-      ys_sorted = np.asarray(mean_curves[label])[order]
-      finite = ~np.isnan(ys_sorted)
-      ax.plot(xs_sorted[finite], ys_sorted[finite], color=cmaps[label](1.0), linewidth=0.8, alpha=0.5, zorder=3)
-  for label in families:
-    _add_ess_colored_dots(ax, alphas, mean_curves[label], ess_over_k, cmaps[label], norm, size=10, zorder=4)
+      donor_matrix = shadow_curves.get(label)
+      if donor_matrix is None:
+        continue
+      color = cmaps[label](1.0)[:3]
+      for donor_row in np.asarray(donor_matrix):
+        ys_sorted = donor_row[order]
+        finite = ~np.isnan(ys_sorted)
+        ax.plot(xs_sorted[finite], ys_sorted[finite], color=color, linewidth=0.5, alpha=0.12, zorder=2)
 
-  ax.axhline(0.5, color='black', linewidth=0.8, linestyle='--', alpha=0.5, zorder=1)
+  for label in families:
+    _add_ess_colored_dots(ax, alphas, mean_curves[label], ess_over_k, cmaps[label], norm, size=dot_size, zorder=4)
+
+  # zorder above the dots (4) so these reference lines/the axes' own
+  # border stay visible ON TOP of the (now much thicker/bigger) curves and
+  # markers instead of being painted over by them.
+  ref_line_zorder = 5 if poster else 1
+  ax.axhline(0.5, color='black', linewidth=0.8, linestyle='--', alpha=0.5, zorder=ref_line_zorder)
   center_idx = int(np.argmin(np.abs(np.asarray(alphas) - center_alpha)))
-  ax.axvline(alphas[center_idx], color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=1)
+  ax.axvline(alphas[center_idx], color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=ref_line_zorder)
+  if poster:
+    for spine in ax.spines.values():
+      spine.set_zorder(6)
 
   ax.set_xlim(min(alphas), max(alphas))
-  ax.set_ylim(-0.02, 1.02)
-  ax.set_xlabel('alpha (meta-evaluation balance)')
-  ax.set_ylabel('orientation score')
+  ax.set_ylim(0, 1) if poster else ax.set_ylim(-0.02, 1.02)
+  ax.set_xlabel(xlabel, fontsize=axis_label_fontsize)
+  ax.set_ylabel(ylabel, fontsize=axis_label_fontsize)
+  if tick_label_fontsize:
+    ax.tick_params(axis='both', labelsize=tick_label_fontsize)
   ax.spines['top'].set_visible(False)
   ax.spines['right'].set_visible(False)
 
+  panel_titles = _POSTER_PANEL_TITLES if poster else _PANEL_TITLES
   proxies = [
-      Line2D([0], [0], color=cmaps[label](1.0), marker='o', linestyle='none', markersize=5,
-             label=_PANEL_TITLES[label])
+      Line2D([0], [0], color=cmaps[label](1.0), marker='o', linestyle='none',
+             markersize=(20 if poster else 5), label=panel_titles[label])
       for label in families
   ]
-  # Both legends live BELOW the axes (bbox_to_anchor y<0, in axes
-  # fraction coordinates), side by side when both are present -- kept out
-  # of the plot area entirely rather than overlapping the dots/markers.
-  # fig.savefig's bbox_inches='tight' (set by every caller) expands the
-  # saved image to include them, so nothing is cut off.
-  dot_anchor = (0.1, -0.14) if (synth25_pools or loo_points) else (0.5, -0.14)
-  dot_legend = ax.legend(handles=proxies, fontsize=8, loc='upper center', bbox_to_anchor=dot_anchor,
-                          title='color = reliability, ESS', title_fontsize=7)
+  if shadow_curves:
+    proxies.append(Line2D([0], [0], color='0.4', linewidth=1.2, alpha=0.5, label='individual donor (faint)'))
+  if poster:
+    # Right side of the plot, stacked vertically, in FIGURE-fraction
+    # coordinates (not axes-fraction) so the anchor doesn't depend on the
+    # axes' own size -- placed clear of the reliability strips (added
+    # later, by the caller, further right of the axes' own edge), and
+    # bbox_inches='tight' + the caller's bbox_extra_artists (every Legend
+    # on the figure) expands the saved canvas to fit both, same fix as the
+    # below-axes layout used before.
+    dot_legend = ax.legend(handles=proxies, fontsize=legend_fontsize, loc='upper left',
+                            bbox_to_anchor=(1.32, 1.0), bbox_transform=ax.transAxes)
+  else:
+    # Both legends live BELOW the axes (bbox_to_anchor y<0, in axes
+    # fraction coordinates), side by side when both are present -- kept out
+    # of the plot area entirely rather than overlapping the dots/markers.
+    # fig.savefig's bbox_inches='tight' (set by every caller) expands the
+    # saved image to include them, so nothing is cut off.
+    dot_anchor = (0.1, -0.14) if (synth25_pools or loo_points) else (0.5, -0.14)
+    dot_legend = ax.legend(handles=proxies, fontsize=legend_fontsize, loc='upper center', bbox_to_anchor=dot_anchor,
+                            title='color = reliability, ESS', title_fontsize=legend_title_fontsize)
   ax.add_artist(dot_legend)
 
   pool_proxies = []
@@ -371,7 +512,7 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
       if a0 is None or a0 != a0:  # excludes NaN/absent
         continue
       marker = _POOL_MARKERS.get(pool_name, 'o')
-      size = _POOL_MARKER_SIZE.get(pool_name, _POOL_MARKER_SIZE_DEFAULT)
+      size = _POOL_MARKER_SIZE.get(pool_name, _POOL_MARKER_SIZE_DEFAULT) * pool_marker_mult
       drawn = False
       for label in families:  # NOT ('A','B','T','J') -- info can hold both T and J (T from the main
                                # A/B/T pools cache, J merged in separately), but only `families` (whichever
@@ -381,17 +522,40 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
         if y is None or y != y or label not in cmaps:
           continue
         ax.scatter([a0], [y], marker=marker, s=size, color=cmaps[label](1.0), edgecolors='black',
-                   linewidths=0.8, alpha=0.5, zorder=6)
+                   linewidths=1, alpha=0.5, zorder=6)
         drawn = True
       if drawn:
+        base_marker_size = 7.5 if size == _POOL_MARKER_SIZE_LARGE * pool_marker_mult else 4.6
         pool_proxies.append(Line2D([0], [0], marker=marker, linestyle='none', color='0.5',
                                     markeredgecolor='black', alpha=0.5,
-                                    markersize=(7.5 if size == _POOL_MARKER_SIZE_LARGE else 4.6),
+                                    markersize=base_marker_size * pool_marker_mult * _POOL_MARKER_SIZE.get(label, _POOL_MARKER_SIZE_DEFAULT) / 100,
                                     label=pool_name))
     if pool_proxies:
-      pool_legend = ax.legend(handles=pool_proxies, fontsize=7, loc='upper center', bbox_to_anchor=(0.95, -0.14),
-                               ncol=2, title=f'pool (marker shape) @ its own alpha_0 ({synth25_metric_label})',
-                               title_fontsize=7)
+      if poster:
+        # Placed directly adjacent to dot_legend's own bottom edge (no gap,
+        # no overlap) rather than at a second FIXED anchor -- a fixed
+        # (top=1.0, bottom=0.0) pair only avoids overlap if the two
+        # legends' natural (content-driven) heights happen to sum to <=
+        # the axes' height, which stopped holding once the fonts/markers
+        # got big enough to make dot_legend alone taller than half the
+        # axes. Measuring dot_legend's actual rendered height (forces one
+        # draw pass) and anchoring pool_legend's TOP there instead makes
+        # the two stack as one continuous block -- together spanning from
+        # the axes' own top down by exactly their combined natural height,
+        # whatever that is, with no collision.
+        fig = ax.figure
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        dot_bbox_axes = dot_legend.get_window_extent(renderer=renderer).transformed(ax.transAxes.inverted())
+        pool_legend = ax.legend(handles=pool_proxies, fontsize=legend_fontsize, loc='upper left',
+                                 bbox_to_anchor=(1.32, dot_bbox_axes.y0), bbox_transform=ax.transAxes, ncol=1,
+                                 title="Shayegh et al. (2025)'s\nsynthesis-based\nmeta-evaluation",
+                                 title_fontsize=legend_title_fontsize)
+      else:
+        pool_legend = ax.legend(handles=pool_proxies, fontsize=legend_fontsize, loc='upper center',
+                                 bbox_to_anchor=(0.95, -0.14), ncol=2,
+                                 title=f'pool (marker shape) @ its own alpha_0 ({synth25_metric_label})',
+                                 title_fontsize=legend_title_fontsize)
       ax.add_artist(pool_legend)
 
   if loo_points and len(loo_points.get('dropped_systems', [])) > 0:
@@ -470,7 +634,7 @@ def _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_prese
   has_data = bin_counts > 0
   x_bucket, y_bucket = bin_centers[has_data], bin_means[has_data]
 
-  fig, ax = plt.subplots(figsize=(6, 5))
+  fig, ax = plt.subplots(figsize=(12, 10))
   ax.set_box_aspect(1)
   ax.scatter(x_raw, y_raw, color=_DARK_COLOR[family], s=6, alpha=0.15, linewidths=0,
              zorder=2, label=f'{n_donors} donors x {n_alpha} alphas')
@@ -556,6 +720,28 @@ if __name__ == '__main__':
                             'every point shares ONE marker icon (only color, by family, distinguishes them) '
                             '-- there is no pool-shape encoding here, just K leave-one-out subsets. '
                             'Independent of --overlay-synth25; both can be on at once.')
+  parser.add_argument('--shadow-donors', action=argparse.BooleanOptionalAction, default=False,
+                       help='draw one faint constant-alpha line per donor (data[\'A\']/[\'B\']/[\'T\']/[\'J\'], '
+                            'the (n_donors, n_alpha) matrices already in the cache -- no recomputation) '
+                            'behind the bold mean-across-donors dots, on the default single-axes plot only '
+                            '(not --aspect-donors/--per-donor, which already show one donor at a time). '
+                            'Shows spread/dispersion across donors that the mean curve alone hides.')
+  parser.add_argument('--beta-axis', action=argparse.BooleanOptionalAction, default=False,
+                       help='re-parameterize the x-axis from alpha to beta = 1 / (1 + sqrt(1/alpha - 1)) -- '
+                            'monotonically increasing over (0, 1] (beta(1)=1, beta(0.5)=0.5, beta->0 as '
+                            'alpha->0+), so every alpha-indexed array (mean curves, ESS, shadow lines, pool/'
+                            'loo markers\' own alpha0) stays correctly aligned, just relabeled on a new '
+                            'x-scale -- applied to every alpha-valued quantity on the plot (the dot x-'
+                            'positions, alpha_0(D)\'s vertical line, --overlay-synth25 pool markers\' alpha0, '
+                            '--overlay-loo markers\' alpha0). Default: False (plain alpha, unaffected).')
+  parser.add_argument('--poster', action=argparse.BooleanOptionalAction, default=False,
+                       help='presentation-size render on the default single-axes plot: bigger dots/lines/pool '
+                            'markers, bigger fonts everywhere (axis labels, ticks, legend), short axis labels '
+                            '(\'beta\'/\'alpha\' and \'faithfullness\' instead of the verbose default text), '
+                            'and no suptitle. Purely cosmetic -- no effect on the underlying data. Default: '
+                            'False.')
+  parser.add_argument('--format', choices=['png', 'pdf'], default='png',
+                       help='output file format/extension for the default single-axes plot. Default: png.')
   args = parser.parse_args()
   base = args.dataset
   if args.dial_preset is None:
@@ -656,6 +842,27 @@ if __name__ == '__main__':
   cutoff_frac = _ESS_CUTOFF_ABS / K
   norm = SplineReliabilityNorm(vmin=cutoff_frac, vmax=1.0)
 
+  # --beta-axis: every alpha-valued quantity that ends up as an x-position
+  # gets re-parameterized here, once, in place -- lib.alpha.alpha_to_beta is
+  # monotonically increasing, so ess_over_k/mean_curves/shadow_curves (all
+  # still indexed by the ORIGINAL alphas array's position) stay correctly
+  # aligned with plot_alphas without re-sorting anything.
+  plot_alphas = data['alphas']
+  plot_center_alpha = data['center_alpha']
+  plot_xlabel = 'β' if args.poster else 'alpha (meta-evaluation balance)'
+  plot_ylabel = 'Faithfullness' if args.poster else 'orientation score'
+  if args.beta_axis:
+    plot_alphas = alpha_to_beta(plot_alphas)
+    plot_center_alpha = float(alpha_to_beta(plot_center_alpha))
+    plot_xlabel = 'β' if args.poster else 'beta = 1 / (1 + sqrt(1/alpha - 1))'
+    if synth25_pools:
+      for info in synth25_pools.values():
+        a0 = info.get('alpha0')
+        if a0 is not None and a0 == a0:  # excludes NaN
+          info['alpha0'] = float(alpha_to_beta(a0))
+    if loo_points:
+      loo_points['alpha0'] = alpha_to_beta(loo_points['alpha0'])
+
   # Third/fourth families: 'T' (orientation-neutral All-MQM) and/or 'J'
   # (orientation-neutral Joint) -- whichever are present. Most caches have
   # at most one (additive/additive_mean's own T, or offset's own J /
@@ -672,7 +879,18 @@ if __name__ == '__main__':
   # markers always report A/B/T (lib.synth25_orientation never computes
   # J), so an 'offset' cache (whose OWN third family is J) still needs a
   # 'T' cmap available to draw its T-family pool markers alongside J's dots.
-  cmaps = {label: _ess_over_k_cmap(_DARK_COLOR[label]) for label in ('A', 'B', 'T', 'J')}
+  # --poster: dots/legend/pool markers get the BRIGHT color (POSTER_DARK_
+  # COLOR's more hue-separated blue/green, lightened moderately -- enough
+  # to read as "bright" without washing out into near-indistinguishable
+  # pastels the way a heavier blend did); the connecting lines get the
+  # SAME base hue but UNlightened (darker), so curve vs. marker read as
+  # two different intensities of the same family color, not two shades
+  # that happen to differ by ESS alone.
+  base_colors = _POSTER_DARK_COLOR if args.poster else _DARK_COLOR
+  family_colors = {label: (_lighten(base_colors[label], amount=0.35) if args.poster else base_colors[label])
+                    for label in ('A', 'B', 'T', 'J')}
+  cmaps = {label: _ess_over_k_cmap(family_colors[label]) for label in ('A', 'B', 'T', 'J')}
+  line_cmaps = {label: _ess_over_k_cmap(base_colors[label]) for label in ('A', 'B', 'T', 'J')}
 
   if args.aspect_donors:
     # One square panel per ASPECT_DONORS entry (fixed order, not
@@ -680,12 +898,12 @@ if __name__ == '__main__':
     # family curves -- unlike the mean-across-donors default, there's only
     # one "donor" per panel here, so no averaging.
     donor_row = {d: i for i, d in enumerate(data['donors'])}
-    fig, axes = plt.subplots(1, len(ASPECT_DONORS), figsize=(6 * len(ASPECT_DONORS), 6.5))
+    fig, axes = plt.subplots(1, len(ASPECT_DONORS), figsize=(12 * len(ASPECT_DONORS), 10))
     for ax, donor in zip(axes, ASPECT_DONORS):
       ax.set_box_aspect(1)
       curves = {label: data[label][donor_row[donor]] for label in families}
-      _draw_orientation_axes(ax, data['alphas'], curves, ess_over_k, cmaps, norm, data['center_alpha'],
-                              families=families)
+      _draw_orientation_axes(ax, plot_alphas, curves, ess_over_k, cmaps, norm, plot_center_alpha,
+                              families=families, xlabel=plot_xlabel)
       ax.set_title(donor, fontsize=10)
     strip_ax = axes[-1]
     donor_desc = '/'.join(ASPECT_DONORS)
@@ -698,14 +916,14 @@ if __name__ == '__main__':
     n = len(donor_order)
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
-    fig, axes = plt.subplots(rows, cols, figsize=(3.4 * cols, 3.8 * rows))
+    fig, axes = plt.subplots(rows, cols, figsize=(12 * cols, 10 * rows))
     axes_flat = np.atleast_1d(axes).ravel()
     for idx, donor in enumerate(donor_order):
       ax = axes_flat[idx]
       ax.set_box_aspect(1)
       curves = {label: data[label][idx] for label in families}
-      _draw_orientation_axes(ax, data['alphas'], curves, ess_over_k, cmaps, norm, data['center_alpha'],
-                              families=families)
+      _draw_orientation_axes(ax, plot_alphas, curves, ess_over_k, cmaps, norm, plot_center_alpha,
+                              families=families, xlabel=plot_xlabel)
       ax.set_title(donor, fontsize=7)
     for ax in axes_flat[n:]:
       ax.axis('off')
@@ -713,23 +931,30 @@ if __name__ == '__main__':
     donor_desc = f'{n} donors (no averaging)'
   else:
     # data['A']/data['B']/data['T'] are (n_donors, n_alpha) -- per-donor
-    # shadow curves, kept for later use (see _draw_orientation_axes), not
-    # drawn here.
+    # shadow curves, drawn behind the mean when --shadow-donors is on (see
+    # _draw_orientation_axes's shadow_curves param), no recomputation
+    # needed since they're already sitting in the cache.
     mean_curves = {label: np.nanmean(data[label], axis=0) for label in families}
-    fig, ax = plt.subplots(figsize=(9, 6))
+    shadow_curves = {label: data[label] for label in families} if args.shadow_donors else None
+    fig, ax = plt.subplots(figsize=(13, 10) if args.poster else (12, 10))
     ax.set_box_aspect(1)  # square PLOT box -- independent of the title/colorbar space around it
-    _draw_orientation_axes(ax, data['alphas'], mean_curves, ess_over_k, cmaps, norm, data['center_alpha'],
+    _draw_orientation_axes(ax, plot_alphas, mean_curves, ess_over_k, cmaps, norm, plot_center_alpha,
                             families=families, synth25_pools=synth25_pools,
-                            synth25_metric_label=synth25_metric_label, loo_points=loo_points)
+                            synth25_metric_label=synth25_metric_label, loo_points=loo_points,
+                            shadow_curves=shadow_curves, xlabel=plot_xlabel, ylabel=plot_ylabel,
+                            poster=args.poster, line_cmaps=line_cmaps)
     strip_ax = ax
     donor_desc = f'{len(data["donors"])} donors'
 
   synthesis_title = '' if data['synthesis'] == 'offset' else f', synthesis={data["synthesis"]}'
   dial_preset_title = '' if data['dial_preset'] == 'linear' else f', dial_preset={data["dial_preset"]}'
-  fig.suptitle(f'{data["dataset"]}: scorer orientation vs. alpha ({data["metametric"].upper()}, '
-               f'K={K} systems, {donor_desc}, '
-               f'alpha_0(D)={data["center_alpha"]:.4f}{synthesis_title}{dial_preset_title})', fontsize=11)
-  fig.tight_layout(rect=[0, 0, 0.85, 0.95])
+  center_label = 'beta_0(D)' if args.beta_axis else 'alpha_0(D)'
+  axis_title = ' vs. beta' if args.beta_axis else ' vs. alpha'
+  if not args.poster:
+    fig.suptitle(f'{data["dataset"]}: scorer orientation{axis_title} ({data["metametric"].upper()}, '
+                 f'K={K} systems, {donor_desc}, '
+                 f'{center_label}={plot_center_alpha:.4f}{synthesis_title}{dial_preset_title})', fontsize=11)
+  fig.tight_layout(rect=[0, 0, 0.85, 1.0] if args.poster else [0, 0, 0.85, 0.95])
 
   # Strips are added AFTER tight_layout, positioned off strip_ax's FINAL
   # bbox (the single axes, or the rightmost panel in the --aspect-donors
@@ -741,7 +966,8 @@ if __name__ == '__main__':
   _STRIP_WIDTH = 0.012
   for i, label in enumerate(families):
     _draw_reliability_strip(fig, strip_ax, cmaps[label], norm, K, _ESS_CUTOFF_ABS,
-                             x_offset=0.02 + i * _STRIP_WIDTH, label=(i == len(families) - 1))
+                             x_offset=0.02 + i * _STRIP_WIDTH, label=(i == len(families) - 1),
+                             fontsize=32 if args.poster else 8, border=not args.poster)
 
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
   metametric_suffix = '' if data['metametric'] == 'spa' else f'_{data["metametric"]}'
@@ -757,19 +983,29 @@ if __name__ == '__main__':
   aspectdonors_suffix = '_aspectdonors' if args.aspect_donors else ('_perdonor' if args.per_donor else '')
   synth25_suffix = '_synth25' if args.overlay_synth25 else ''
   loo_suffix = '_loo' if args.overlay_loo else ''
+  beta_suffix = '_beta' if args.beta_axis else ''
   if data.get('T') is not None and data.get('J') is not None:
     # --green-family ABTJ cache (both T and J at once) -- short, distinct
     # name instead of the long auto-chain above (which was designed around
     # exactly one of T/J ever being present at a time, and is already long
     # enough without a 5th thing to disambiguate).
     plot_path = os.path.join(
-        ARTIFACTS_DIR, f'orientation_{base}_ABTJ{aspectdonors_suffix}{synth25_suffix}{loo_suffix}.png')
+        ARTIFACTS_DIR,
+        f'orientation_{base}_ABTJ{aspectdonors_suffix}{synth25_suffix}{loo_suffix}{beta_suffix}.{args.format}')
   else:
     plot_path = os.path.join(
         ARTIFACTS_DIR,
         f'orientation_vs_alpha_{base}{grid_suffix}{metametric_suffix}{synthesis_suffix}{dial_preset_suffix}'
-        f'{green_family_suffix}{aspectdonors_suffix}{synth25_suffix}{loo_suffix}.png')
-  fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+        f'{green_family_suffix}{aspectdonors_suffix}{synth25_suffix}{loo_suffix}{beta_suffix}.{args.format}')
+  # bbox_inches='tight' does NOT reliably auto-detect every legend on its
+  # own -- confirmed empirically: the dot/pool/loo legends (all attached
+  # via ax.add_artist, positioned via negative-fraction bbox_to_anchor
+  # below the axes) were silently missing from every plot this cache
+  # produced despite the code creating them correctly. Passing every
+  # Legend artist on the figure explicitly via bbox_extra_artists is
+  # matplotlib's own documented fix for exactly this case.
+  legend_artists = fig.findobj(matplotlib.legend.Legend)
+  fig.savefig(plot_path, dpi=150, bbox_inches='tight', bbox_extra_artists=legend_artists, format=args.format)
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)
 

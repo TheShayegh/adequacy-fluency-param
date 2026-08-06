@@ -29,6 +29,7 @@ this one back, so the dependency runs one way only.
 
 from __future__ import annotations
 
+import concurrent.futures as cf
 import sys
 import time
 
@@ -221,6 +222,22 @@ def donor_synth25_orientation_all_pools(
   return out
 
 
+def _donor_synth25_job(job):
+  """One donor's worker-process body for dataset_synth25_orientation_all_
+  pools's --workers > 1 path -- module-level so it's importable/picklable
+  under macOS's spawn start method. Donors are independent (each call only
+  reads its own donor's segment file off disk), so this parallelizes with
+  no cross-donor coordination needed. Returns (donor, result_or_None)."""
+  (dataset, donor, systems, root, metametric_name, dial_grid, synthesis, tie_seed, num_permutations, seed,
+   adjacent_only) = job
+  r = donor_synth25_orientation_all_pools(
+      dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
+      synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
+      adjacent_only=adjacent_only,
+  )
+  return donor, r
+
+
 def dataset_synth25_orientation_all_pools(
     dataset: str,
     systems: list[str],
@@ -234,30 +251,51 @@ def dataset_synth25_orientation_all_pools(
     seed: int = DEFAULT_SEED,
     progress: bool = False,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
+    workers: int = 1,
 ) -> dict[str, dict[str, float]]:
   """{pool_name: {'A': .., 'B': .., 'T': ..}} for every pool in POOL_BLOCKS --
   the all-pools counterpart of dataset_synth25_orientation, mean over every
   usable donor of donor_synth25_orientation_all_pools. NaN for a
-  (pool, family) cell with zero usable donors."""
+  (pool, family) cell with zero usable donors.
+
+  workers: >1 dispatches every donor's donor_synth25_orientation_all_pools
+  call to a ProcessPoolExecutor (_donor_synth25_job) instead of running
+  sequentially -- this is the expensive step (one SPA/PA permutation-test
+  sweep per dial per family per pool per donor, no alpha sweep to amortize
+  it against, unlike compute_scorer_orientation_vs_alpha.py's donor loop),
+  and donors are independent. Default 1 (sequential, original behavior)."""
   if candidates is None:
     candidates = real_scorers(dataset, root=root, systems=systems, require_seg_scores=True)
 
   t0 = time.time()
   per_donor = []
   n = len(candidates)
-  for i, donor in enumerate(candidates, 1):
-    r = donor_synth25_orientation_all_pools(
-        dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
-        synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
-        adjacent_only=adjacent_only,
-    )
-    if r is not None:
-      per_donor.append(r)
+
+  def _log(i, donor, r):
     if progress:
       elapsed = time.time() - t0
       eta = elapsed / i * (n - i)
       status = 'ok' if r is not None else 'skipped (insufficient coverage)'
       print(f'[{i}/{n}] {donor} {status} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
+
+  if workers > 1:
+    jobs = [(dataset, donor, systems, root, metametric_name, dial_grid, synthesis, tie_seed, num_permutations,
+              seed, adjacent_only) for donor in candidates]
+    with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+      for i, (donor, r) in enumerate(ex.map(_donor_synth25_job, jobs), 1):
+        if r is not None:
+          per_donor.append(r)
+        _log(i, donor, r)
+  else:
+    for i, donor in enumerate(candidates, 1):
+      r = donor_synth25_orientation_all_pools(
+          dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
+          synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
+          adjacent_only=adjacent_only,
+      )
+      if r is not None:
+        per_donor.append(r)
+      _log(i, donor, r)
 
   out = {}
   for pool_name in POOL_BLOCKS:
@@ -494,6 +532,17 @@ def donor_synth25_orientation_J_all_pools(
   return out
 
 
+def _donor_synth25_J_job(job):
+  """_donor_synth25_job's J counterpart -- see that function's own
+  docstring."""
+  dataset, donor, systems, root, metametric_name, dial_grid, tie_seed, num_permutations, seed, adjacent_only = job
+  r = donor_synth25_orientation_J_all_pools(
+      dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
+      tie_seed=tie_seed, num_permutations=num_permutations, seed=seed, adjacent_only=adjacent_only,
+  )
+  return donor, r
+
+
 def dataset_synth25_orientation_J_all_pools(
     dataset: str,
     systems: list[str],
@@ -506,29 +555,44 @@ def dataset_synth25_orientation_J_all_pools(
     seed: int = DEFAULT_SEED,
     progress: bool = False,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
+    workers: int = 1,
 ) -> dict[str, float]:
   """{pool_name: orientation_score}, mean over every usable donor of
   donor_synth25_orientation_J_all_pools -- the J counterpart of
   dataset_synth25_orientation_all_pools. NaN for a pool with zero usable
-  donors."""
+  donors. workers: see dataset_synth25_orientation_all_pools's own
+  docstring -- same independent-per-donor parallelization."""
   if candidates is None:
     candidates = real_scorers(dataset, root=root, systems=systems, require_seg_scores=True)
 
   t0 = time.time()
   per_donor = []
   n = len(candidates)
-  for i, donor in enumerate(candidates, 1):
-    r = donor_synth25_orientation_J_all_pools(
-        dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
-        tie_seed=tie_seed, num_permutations=num_permutations, seed=seed, adjacent_only=adjacent_only,
-    )
-    if r is not None:
-      per_donor.append(r)
+
+  def _log(i, donor, r):
     if progress:
       elapsed = time.time() - t0
       eta = elapsed / i * (n - i)
       status = 'ok' if r is not None else 'skipped (insufficient coverage)'
       print(f'[{i}/{n}] {donor} {status} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
+
+  if workers > 1:
+    jobs = [(dataset, donor, systems, root, metametric_name, dial_grid, tie_seed, num_permutations, seed,
+              adjacent_only) for donor in candidates]
+    with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+      for i, (donor, r) in enumerate(ex.map(_donor_synth25_J_job, jobs), 1):
+        if r is not None:
+          per_donor.append(r)
+        _log(i, donor, r)
+  else:
+    for i, donor in enumerate(candidates, 1):
+      r = donor_synth25_orientation_J_all_pools(
+          dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
+          tie_seed=tie_seed, num_permutations=num_permutations, seed=seed, adjacent_only=adjacent_only,
+      )
+      if r is not None:
+        per_donor.append(r)
+      _log(i, donor, r)
 
   out = {}
   for pool_name in POOL_BLOCKS:

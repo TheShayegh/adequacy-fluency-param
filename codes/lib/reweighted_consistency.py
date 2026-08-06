@@ -26,6 +26,10 @@ plot_delta_alpha0_within_dataset.py, without needing rankings_at/pooled.
 
 from __future__ import annotations
 
+import concurrent.futures as cf
+import sys
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -79,9 +83,20 @@ def common_alpha_range(
   return max(los), min(his)
 
 
+def _solve_w_job(job):
+  """One (dataset, alpha) worker-process body for solve_w_for_datasets's
+  --workers > 1 path -- module-level so it's importable/picklable under
+  macOS's spawn start method. Every (d, alpha) pair is independent (each
+  call only reads its own dataset's (a, b) arrays, no shared mutable
+  state), so this parallelizes with no cross-job coordination needed."""
+  d, a, b, alpha, solver, solver_kwargs = job
+  return d, alpha, solver(a, b, alpha, **solver_kwargs)
+
+
 def solve_w_for_datasets(
     datasets: list[str], alphas, root: str = '.', solver=solve_w_exact,
-    systems_by_dataset: dict[str, list[str]] | None = None, **solver_kwargs,
+    systems_by_dataset: dict[str, list[str]] | None = None, workers: int = 1, progress: bool = False,
+    **solver_kwargs,
 ) -> dict[tuple[str, float], object]:
   """Solves w_d(alpha) once for every (dataset, alpha) pair -- shared
   across all 5 meta-metrics' curves, since the weighting itself doesn't
@@ -91,11 +106,51 @@ def solve_w_for_datasets(
   systems_by_dataset: restrict dataset d's systems to systems_by_dataset[d]
   instead of real_systems(d) -- e.g. a LOO/bootstrap/exclude-system subset
   of one base dataset, id'd by a synthetic `d` that isn't itself a real
-  WMT dataset key (see dataset_score_arrays)."""
+  WMT dataset key (see dataset_score_arrays).
+
+  workers: >1 dispatches every (d, alpha) job to a ProcessPoolExecutor
+  (_solve_w_job) instead of solving sequentially -- solve_w_exact's cost
+  is highly non-uniform across alpha (a fast certified KKT pass vs. a slow
+  exhaustive-enumeration fallback, see lib.reweight_exact's module
+  docstring), so this is the actual bottleneck in dense-grid callers like
+  compute_scorer_orientation_vs_alpha.py, not just the per-donor loop.
+  Default 1 (sequential, original behavior) -- every other caller of this
+  shared function is unaffected unless it opts in.
+
+  progress: log '[done/n] elapsed, eta' to stderr every ~5% of jobs (both
+  the sequential and parallel paths) -- solve_w_exact's per-alpha cost
+  swings from milliseconds to 15+ seconds depending on whether that
+  fallback fires, so a flat elapsed/n_total estimate isn't available up
+  front; this reports the same running elapsed/done*(n-done) estimate the
+  donor loop below already uses. Default False -- opt-in, since some
+  callers solve as few as one alpha and would get a log line per call for
+  no benefit."""
+  arrays = dataset_score_arrays(datasets, root, systems_by_dataset)
+  jobs = [(d, a, b, alpha, solver, solver_kwargs) for d, (a, b) in arrays.items() for alpha in alphas]
+  n = len(jobs)
+  log_every = max(1, n // 20)
+  t0 = time.time()
   cache = {}
-  for d, (a, b) in dataset_score_arrays(datasets, root, systems_by_dataset).items():
-    for alpha in alphas:
-      cache[(d, alpha)] = solver(a, b, alpha, **solver_kwargs)
+  done = 0
+
+  def _log():
+    if progress and (done % log_every == 0 or done == n):
+      elapsed = time.time() - t0
+      eta = elapsed / done * (n - done)
+      print(f'solve_w_for_datasets: [{done}/{n}] elapsed {elapsed:.1f}s, eta {eta:.1f}s', file=sys.stderr)
+
+  if workers <= 1:
+    for d, a, b, alpha, solver_, solver_kwargs_ in jobs:
+      cache[(d, alpha)] = solver_(a, b, alpha, **solver_kwargs_)
+      done += 1
+      _log()
+    return cache
+
+  with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+    for d, alpha, result in ex.map(_solve_w_job, jobs):
+      cache[(d, alpha)] = result
+      done += 1
+      _log()
   return cache
 
 

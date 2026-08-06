@@ -105,6 +105,66 @@ def union_alpha_grid(a: np.ndarray, b: np.ndarray, step: float = 0.01) -> list[f
   return sorted(set(round(v, 10) for v in list(uniform) + alpha_ijs))
 
 
+def alpha_to_beta(alpha):
+  """beta = 1 / (1 + sqrt(1/alpha - 1)) -- a re-parameterization of alpha
+  that's monotonically increasing over (0, 1] with a fixed point at 0.5
+  (beta(0.5)=0.5, beta(1)=1, beta->0 as alpha->0+), used by --beta-axis
+  (plot_scorer_orientation_vs_alpha.py) and alpha_grid_for_beta below.
+  Vectorized (accepts a scalar or an array); alpha<=0 divides by zero and
+  returns inf/nan via ordinary numpy float semantics (RuntimeWarning
+  suppressed, not an error) rather than raising, matching beta_to_alpha's
+  own handling of its symmetric edge case at beta=0."""
+  alpha = np.asarray(alpha, dtype=float)
+  with np.errstate(divide='ignore', invalid='ignore'):
+    return 1.0 / (1.0 + np.sqrt(1.0 / alpha - 1.0))
+
+
+def beta_to_alpha(beta):
+  """Inverse of alpha_to_beta: alpha = 1 / (1 + ((1-beta)/beta)^2) --
+  solved directly from beta = 1/(1+sqrt(1/alpha-1)) by isolating alpha.
+  beta=0 divides by zero; ordinary numpy float semantics send that to
+  alpha=0 (the correct limit: (1-0)/0 = inf, inf^2 = inf, 1/(1+inf) = 0),
+  with the RuntimeWarning suppressed rather than raised."""
+  beta = np.asarray(beta, dtype=float)
+  with np.errstate(divide='ignore', invalid='ignore'):
+    ratio = (1.0 - beta) / beta
+    return 1.0 / (1.0 + ratio ** 2)
+
+
+def alpha_grid_for_beta(beta_stepsize: float = 0.05, alpha_min: float = 0.0, alpha_max: float = 1.0) -> list[float]:
+  """List of alpha values corresponding to a BETA grid evenly spaced at
+  `beta_stepsize` over [alpha_min, alpha_max] (those two names bound the
+  BETA range this builds, matching every other alpha-grid builder's own
+  parameter-naming convention here, not the alpha range -- see
+  union_alpha_grid_beta below for a caller that passes in a dataset's own
+  reachable range translated into beta-space via alpha_to_beta). Each beta
+  grid point is mapped back to its alpha via beta_to_alpha; since that map
+  is monotonically increasing, the returned list is already ascending in
+  alpha, matching every other alpha-grid builder's own convention -- no
+  re-sort needed."""
+  n = int(round((alpha_max - alpha_min) / beta_stepsize))
+  betas = np.array([alpha_min + k * beta_stepsize for k in range(n + 1)])
+  return [round(float(v), 10) for v in beta_to_alpha(betas)]
+
+
+def union_alpha_grid_beta(a: np.ndarray, b: np.ndarray, beta_stepsize: float = 0.05) -> list[float]:
+  """union_alpha_grid's exact structure (the union of every pairwise
+  alpha_ij with a sweep of [alpha_min, alpha_max], deduplicated) EXCEPT the
+  sweep half is evenly spaced in BETA space (alpha_grid_for_beta) instead
+  of alpha space -- the alpha_ij union stays, only the uniform-sweep
+  component changes. [alpha_lo, alpha_hi] (this dataset's own reachable
+  range, lib.alpha.alpha_min_max) is translated to beta-space via
+  alpha_to_beta before building the beta sweep, so the resulting alpha
+  values land inside the dataset's own reachable range exactly like
+  union_alpha_grid's np.linspace(alpha_lo, alpha_hi, ...) does (including
+  the exact endpoints -- union_alpha_grid doesn't eps-inset either)."""
+  alpha_lo, alpha_hi = alpha_min_max(a, b)
+  beta_lo, beta_hi = float(alpha_to_beta(alpha_lo)), float(alpha_to_beta(alpha_hi))
+  beta_sweep = alpha_grid_for_beta(beta_stepsize=beta_stepsize, alpha_min=beta_lo, alpha_max=beta_hi)
+  alpha_ijs = [v for _, _, v in pairwise_alphas(a, b)]
+  return sorted(set(round(v, 10) for v in beta_sweep + alpha_ijs))
+
+
 def build_alpha_grid(
     lo: float, hi: float, n_grid: int, alpha_0s: dict[str, float] | None = None,
     eps_frac: float = 1e-3,

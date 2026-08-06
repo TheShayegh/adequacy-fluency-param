@@ -1,0 +1,17 @@
+# Pinned dependencies for the scorer-orientation pipeline specifically
+# (compute_scorer_orientation_vs_alpha.py, compute_synth25_orientation.py,
+# plot_scorer_orientation_vs_alpha.py, and everything under codes/lib/ +
+# codes/mwb/ those three import) -- traced by walking that import graph,
+# not a full-project freeze. Versions match what's proven working on the
+# machine this was generated from.
+#
+# Deliberately EXCLUDES packages present in that machine's venv but not
+# reachable from this import graph, notably torch (pulled in only by
+# codes/lib/reweight_exhaustive.py, the retired cross-validation solver
+# this pipeline doesn't use -- multi-GB install avoided) and py-spy (a
+# profiler installed ad hoc during development, not a project dependency).
+numpy==2.0.2
+pandas==2.3.3
+scipy==1.13.1
+matplotlib==3.9.4
+pillow==11.3.0
