@@ -127,6 +127,75 @@ DEFAULT_N_BINS = 8
 PREFERENCE_CMAP = LinearSegmentedColormap.from_list(
     'adequacy_fluency', ['#d62728', '#7b3f99', '#1f5fbf'], N=512)
 
+# ---------------------------------------------------------------------------
+# FIGURE CONFIGURATION -- every visual choice lives here; draw() reads these
+# and nothing below this block needs editing to restyle the figure.
+#
+# Font sizes and pads follow codes/scripts/plot_af_scatter_heen23_jazh24.py
+# (the paper's Figure 1, artifacts/inventory_outliers/Figure1.pdf), and
+# FIG_WIDTH matches that figure's own width so the two sit at the same scale
+# in the paper. The colorbar label placement follows plot_loo_tau_vs_alpha_
+# combo.py's reliability strip (rotation 270 + labelpad, label on the right),
+# which puts the label tight against the bar instead of floating off it.
+# ---------------------------------------------------------------------------
+SHOW_TITLE = False          # Figure 1 carries its caption in LaTeX, not on the axes
+
+FIG_WIDTH = 34.0            # inches -- plot_af_scatter_heen23_jazh24.py's figsize[0]
+FIG_HEIGHT = 34.0           # generous; the square box below plus bbox_inches='tight' sets the real height
+
+# Force the PLOT BOX (the cell grid alone) square, so every cell is square
+# regardless of how much width the colorbar and labels take. Setting the
+# figure's own aspect cannot do this -- the axes rectangle is whatever is
+# left after the colorbar, ylabel and ticks claim their space, so a square
+# FIGURE still yields a wider-than-tall grid. set_box_aspect constrains the
+# axes rectangle itself; FIG_HEIGHT is then only an upper bound, and
+# bbox_inches='tight' trims the slack. Same approach as
+# plot_loo_tau_vs_alpha_combo.py's own square panels. None disables it.
+BOX_ASPECT = 1.0
+
+LABEL_FONTSIZE = 64         # axis titles
+TICK_FONTSIZE = 54          # axis tick labels
+TICK_PAD = 25               # gap between ticks and their labels
+# Figure 1 uses LABEL_PAD = -50, but that is a compensation for ITS layout
+# (two wide panels with shared axes); reused here it drags the axis titles
+# straight onto the tick labels. Positive pad instead -- the font sizes are
+# what follow Figure 1, not this.
+LABEL_PAD = 30
+
+# Per-cell "mean +- std" text. CELL_FONTSIZE is sized to nearly fill a cell;
+# it is a plain number rather than something derived from the grid, so it
+# needs revisiting if FIG_WIDTH or the 8x8 bin counts change a lot.
+CELL_FONTSIZE = 54
+CELL_LINESPACING = 0.95     # <1 tightens the two lines toward each other
+CELL_TEXT_COLOR = 'white'
+
+# False: draw the colorbar (to reserve exactly its space), then hide it, and
+# save against the bbox measured WHILE it was visible -- so the outer figure
+# size and the plot box are byte-for-byte what the colorbar version has, with
+# the bar and its label replaced by whitespace. Simply not creating the
+# colorbar would instead let the plot box expand and bbox_inches='tight'
+# crop the figure narrower, which is not the same figure.
+SHOW_COLORBAR = True
+
+CBAR_LABEL = 'Adequacy over fluency preference'
+CBAR_LABEL_FONTSIZE = LABEL_FONTSIZE
+CBAR_TICK_FONTSIZE = TICK_FONTSIZE
+CBAR_LABEL_ROTATION = 270
+CBAR_LABEL_PAD = 34         # distance from the bar's tick labels to its own label
+CBAR_FRACTION = 0.035       # colorbar width as a fraction of the axes
+CBAR_PAD = 0.02             # gap between the axes and the colorbar
+CBAR_TICKS = (0.0, 1.0)     # endpoints only -- no intermediate ticks
+CBAR_TICKLABELS = ('0', '1')  # bare integers, not 0.00/1.00
+
+XLABEL = 'ESS$(w)$'
+YLABEL = r'Realized $\beta(w)$'
+
+SAVE_PAD_INCHES = 0.1       # matplotlib's own bbox_inches='tight' default
+
+EMPTY_CELL_COLOR = '#f2f2f2'
+GRIDLINE_COLOR = 'white'
+GRIDLINE_WIDTH = 1.0
+
 
 def build_edges(lo: float, hi: float, n: int) -> np.ndarray:
   return np.linspace(lo, hi, n + 1)
@@ -179,38 +248,39 @@ def auto_beta_window(beta: np.ndarray, coverage: float, round_to: float) -> tupl
 
 def draw(stats, beta_edges, ess_edges, title, out_base, formats=('pdf', 'png')):
   """The split-triangle heatmap. stats: dict of (n_beta, n_ess) arrays with
-  'mean', 'std', 'count'."""
+  'mean', 'std', 'count'. All styling comes from the FIGURE CONFIGURATION
+  block above."""
   mean, std, count = stats['mean'], stats['std'], stats['count']
   norm = Normalize(vmin=0.0, vmax=1.0)
 
-  fig, ax = plt.subplots(figsize=(1.35 * len(ess_edges), 1.15 * len(beta_edges)))
+  fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_HEIGHT))
 
   for r in range(len(beta_edges) - 1):
     for c in range(len(ess_edges) - 1):
       x0, x1 = ess_edges[c], ess_edges[c + 1]
       y0, y1 = beta_edges[r], beta_edges[r + 1]
       if count[r, c] == 0 or not np.isfinite(mean[r, c]):
-        ax.add_patch(Polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
-                             closed=True, facecolor='#f2f2f2', edgecolor='white', linewidth=1.0))
+        ax.add_patch(Polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], closed=True,
+                             facecolor=EMPTY_CELL_COLOR, edgecolor=GRIDLINE_COLOR,
+                             linewidth=GRIDLINE_WIDTH))
         continue
 
-      s = 0.0 if not np.isfinite(std[r, c]) else std[r, c]
-      # Upper-right triangle: mean + std. Lower-left: mean - std. Clipped
-      # to the colormap's [0, 1] domain, which is also the preference
-      # score's own range.
-      upper = PREFERENCE_CMAP(norm(np.clip(mean[r, c] + s, 0.0, 1.0)))
-      lower = PREFERENCE_CMAP(norm(np.clip(mean[r, c] - s, 0.0, 1.0)))
+      s_ = 0.0 if not np.isfinite(std[r, c]) else std[r, c]
+      # Upper-right triangle: mean + std. Lower-left: mean - std. Clipped to
+      # the colormap's [0, 1] domain, which is also the score's own range.
+      upper = PREFERENCE_CMAP(norm(np.clip(mean[r, c] + s_, 0.0, 1.0)))
+      lower = PREFERENCE_CMAP(norm(np.clip(mean[r, c] - s_, 0.0, 1.0)))
       ax.add_patch(Polygon([(x0, y0), (x1, y0), (x0, y1)], closed=True,
                            facecolor=lower, edgecolor='none'))
       ax.add_patch(Polygon([(x1, y0), (x1, y1), (x0, y1)], closed=True,
                            facecolor=upper, edgecolor='none'))
       ax.add_patch(Polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], closed=True,
-                           facecolor='none', edgecolor='white', linewidth=1.0))
+                           facecolor='none', edgecolor=GRIDLINE_COLOR, linewidth=GRIDLINE_WIDTH))
 
       ax.text(0.5 * (x0 + x1), 0.5 * (y0 + y1),
-              f'{mean[r, c]:.2f}\n$\\pm${s:.2f}',
-              ha='center', va='center', fontsize=8, color='white', zorder=5,
-              path_effects=None)
+              f'{mean[r, c]:.2f}\n$\\pm${s_:.2f}',
+              ha='center', va='center', fontsize=CELL_FONTSIZE, color=CELL_TEXT_COLOR,
+              linespacing=CELL_LINESPACING, zorder=5)
 
   ax.set_xlim(ess_edges[0], ess_edges[-1])
   ax.set_ylim(beta_edges[0], beta_edges[-1])
@@ -218,22 +288,39 @@ def draw(stats, beta_edges, ess_edges, title, out_base, formats=('pdf', 'png')):
   ax.set_yticks(beta_edges)
   ax.set_xticklabels(tick_labels(ess_edges))
   ax.set_yticklabels(tick_labels(beta_edges))
-  ax.set_xlabel('ESS$(w)$')
-  ax.set_ylabel(r'realized $\beta(w)$')
-  ax.set_title(title, fontsize=10)
+  ax.set_xlabel(XLABEL, fontsize=LABEL_FONTSIZE, labelpad=LABEL_PAD)
+  ax.set_ylabel(YLABEL, fontsize=LABEL_FONTSIZE, labelpad=LABEL_PAD)
+  ax.tick_params(labelsize=TICK_FONTSIZE, pad=TICK_PAD)
+  if BOX_ASPECT is not None:
+    ax.set_box_aspect(BOX_ASPECT)
+  if SHOW_TITLE:
+    ax.set_title(title, fontsize=LABEL_FONTSIZE)
   for side in ('top', 'right', 'bottom', 'left'):
     ax.spines[side].set_visible(True)
 
   sm = plt.cm.ScalarMappable(cmap=PREFERENCE_CMAP, norm=norm)
-  cb = fig.colorbar(sm, ax=ax, fraction=0.035, pad=0.02)
-  cb.set_label('adequacy-over-fluency preference', fontsize=9)
-  cb.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+  cb = fig.colorbar(sm, ax=ax, fraction=CBAR_FRACTION, pad=CBAR_PAD)
+  cb.set_ticks(list(CBAR_TICKS))
+  cb.ax.set_yticklabels(list(CBAR_TICKLABELS), fontsize=CBAR_TICK_FONTSIZE)
+  # Label on the right of the bar, rotated and pulled in by labelpad -- the
+  # plot_loo_tau_vs_alpha_combo.py reliability-strip convention.
+  cb.ax.set_ylabel(CBAR_LABEL, fontsize=CBAR_LABEL_FONTSIZE,
+                   rotation=CBAR_LABEL_ROTATION, labelpad=CBAR_LABEL_PAD)
+  cb.ax.yaxis.set_label_position('right')
 
   fig.tight_layout()
+
+  # Measure the tight bbox WITH the colorbar drawn, then optionally hide it
+  # and save against that same bbox -- see SHOW_COLORBAR.
+  fig.canvas.draw()
+  bbox = fig.get_tightbbox(fig.canvas.get_renderer())
+  if not SHOW_COLORBAR:
+    cb.ax.set_visible(False)
+
   paths = []
   for fmt in formats:
     p = f'{out_base}.{fmt}'
-    fig.savefig(p, dpi=200, bbox_inches='tight')
+    fig.savefig(p, dpi=200, bbox_inches=bbox, pad_inches=SAVE_PAD_INCHES)
     paths.append(p)
   plt.close(fig)
   return paths
