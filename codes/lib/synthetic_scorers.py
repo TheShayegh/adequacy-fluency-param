@@ -122,6 +122,11 @@ EXTENDED_ADDITIVE_MEAN_DIAL_GRID = tuple(
 ABT_DIAL_GRID = tuple(round(-1.5 + 3.0 ** (0.005 * k), 10) for k in range(201))
 ABTJ_J_DIAL_GRID = tuple(round(-3.5 + 4.0 ** (0.005 * k), 10) for k in range(201))
 
+# donor_family_additive_mean_diagonal's own default -- linear, unlike every
+# other additive_mean grid above (which all pack points toward dial=0
+# geometrically): [-0.5, 0.5] in steps of 0.02, 51 points, evenly spaced.
+DIAGONAL_ADDITIVE_MEAN_DIAL_GRID = tuple(round(float(x), 2) for x in np.arange(-0.5, 0.5001, 0.02))
+
 
 def aspect_lookup_table(y: np.ndarray, aspect: np.ndarray) -> np.ndarray:
   """m(a(k,i)), broadcast back to y's shape (section 3.1's group mean m): for
@@ -309,6 +314,52 @@ def donor_family_additive_mean_ab(
   }
 
 
+def donor_family_additive_mean_diagonal(
+    y: np.ndarray, aspect_a: np.ndarray, aspect_b: np.ndarray, dial_grid=DIAGONAL_ADDITIVE_MEAN_DIAL_GRID,
+    standardized: bool = ADDITIVE_MEAN_STANDARDIZED_DEFAULT,
+) -> dict[float, np.ndarray]:
+  """{dial value -> y_dial matrix}, the 'additive_mean' method's Diagonal
+  family: donor_family_additive_mean_ab restricted to a single dial moving
+  A and B in OPPOSITE directions at once (A = dial, B = -dial) instead of
+  independently over the full (A, B) square:
+
+      y_dial(k,i) = y(k,i) + dial * abar_k - dial * bbar_k
+
+  abar_k/bbar_k (and standardized's rescaling to the donor's own between-
+  system spread) are computed exactly as in donor_family_additive_mean_ab --
+  see that function's docstring for the full derivation, including the
+  standardized=True (default) z-scoring. The only difference here is the
+  sign on the B term: where the AB family's diagonal A=B=dial moves both
+  aspects the SAME way (both toward or both away from the donor together),
+  this family's A=dial, B=-dial moves them in OPPOSITE directions -- one
+  aspect's effect grows while the other's shrinks as dial increases.
+  dial=0 reproduces y exactly, the same shared anchor every other family
+  uses.
+
+  Unlike donor_family_additive_mean_ab, the sweep is 1-D again (one dial,
+  not a Cartesian (A, B) square), so this returns a plain {float: matrix}
+  dict like every other single-dial family in this module.
+
+  Default dial_grid is DIAGONAL_ADDITIVE_MEAN_DIAL_GRID: [-0.5, 0.5] in
+  linear steps of 0.02 (51 points), unlike every other additive_mean grid
+  in this module, which packs points geometrically toward dial=0 -- since
+  this family combines two aspects' worth of injected signal into one
+  dial, its saturation profile isn't the single-aspect one those grids
+  were sized for, so it gets its own evenly-spaced grid instead."""
+  abar_k = aspect_a.mean(axis=1)
+  bbar_k = aspect_b.mean(axis=1)
+  if standardized:
+    ybar_k = y.mean(axis=1)
+    za_k = (abar_k - abar_k.mean()) / abar_k.std()
+    zb_k = (bbar_k - bbar_k.mean()) / bbar_k.std()
+    injected_a_k = ybar_k.std() * za_k
+    injected_b_k = ybar_k.std() * zb_k
+  else:
+    injected_a_k = abar_k
+    injected_b_k = bbar_k
+  return {dial: y + dial * injected_a_k[:, None] - dial * injected_b_k[:, None] for dial in dial_grid}
+
+
 # synthesis name -> family generator, all sharing the same signature
 # (y, aspect, dial_grid) -> {dial -> y_dial matrix} and the same
 # dial=0-reproduces-the-donor convention. Shared with lib.
@@ -348,7 +399,7 @@ def default_dial_preset(synthesis: str) -> str:
 def donor_family_spa_points(
     donor_seg: np.ndarray, a_pos: np.ndarray, b_pos: np.ndarray, dial_grid=DIAL_GRID,
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED, synthesis: str = 'offset',
-    human_seg: np.ndarray | None = None, ab_dial_grid=None,
+    human_seg: np.ndarray | None = None, ab_dial_grid=None, diagonal_dial_grid=None,
 ) -> dict[str, dict[float, tuple[float, float]]]:
   """{'A': {dial -> (x, y)}, 'B': {dial -> (x, y)}} for one donor's two
   synthetic families -- 'A' dialed on Adequacy (a_pos), 'B' on Fluency
@@ -387,6 +438,16 @@ def donor_family_spa_points(
   to build it. Ignored (no 'AB' entry, even if given) for every other
   synthesis, since AB has no offset/additive analogue.
 
+  When synthesis='additive_mean' AND `diagonal_dial_grid` is given (not
+  None), a fifth entry 'D' is included: donor_family_additive_mean_
+  diagonal's single-dial family (A = dial, B = -dial -- see that
+  function's docstring), keyed by a plain float dial like A/B/T rather
+  than AB's (A, B) tuples. Opt-in the same way AB is (diagonal_dial_grid
+  defaults to None, D omitted) even though the sweep here is 1-D, not
+  quadratic -- kept opt-in for consistency with AB rather than for cost
+  reasons. Ignored (no 'D' entry, even if given) for every other
+  synthesis, since D has no offset/additive analogue.
+
   synthesis: which SYNTHESIS_GENERATORS entry builds the dial sweep --
   'offset' (default), 'additive', or 'additive_mean'. All three share the
   same dial=0 point (the real donor) by construction, so overlaying more
@@ -417,13 +478,15 @@ def donor_family_spa_points(
     out['T'] = _points(build_family(donor_seg, human_seg, dial_grid))
   if synthesis == 'additive_mean' and ab_dial_grid is not None:
     out['AB'] = _points(donor_family_additive_mean_ab(donor_seg, a_pos, b_pos, ab_dial_grid))
+  if synthesis == 'additive_mean' and diagonal_dial_grid is not None:
+    out['D'] = _points(donor_family_additive_mean_diagonal(donor_seg, a_pos, b_pos, diagonal_dial_grid))
   return out
 
 
 def all_synthetic_family_points(
     dataset: str, systems: list[str], root: str = '.', dial_grid=DIAL_GRID,
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED, synthesis: str = 'offset',
-    ab_dial_grid=None,
+    ab_dial_grid=None, diagonal_dial_grid=None,
 ) -> dict[str, dict[str, dict[float, tuple[float, float]]]]:
   """donor name -> donor_family_spa_points(..., synthesis=synthesis), for
   every donor with a usable segment-level file and enough jointly-valid
@@ -446,7 +509,12 @@ def all_synthetic_family_points(
   (default) omits the 'AB' family entirely (matching every existing
   caller's cost); give it (e.g. GEOM_DIAL_GRID) to opt a synthesis=
   'additive_mean' run into also building it. No effect for any other
-  synthesis."""
+  synthesis.
+
+  diagonal_dial_grid: same pass-through, for the 'D' family (donor_family_
+  additive_mean_diagonal) instead -- None (default) omits it; give it
+  (e.g. DIAGONAL_ADDITIVE_MEAN_DIAL_GRID) to opt in. No effect for any
+  other synthesis."""
   pos = positional_af_matrices(dataset, systems, root=root)
   if pos is None:
     return {}
@@ -468,5 +536,6 @@ def all_synthetic_family_points(
     out[name] = donor_family_spa_points(
         donor_seg[:, mask], a_pos[:, mask], b_pos[:, mask],
         dial_grid=dial_grid, num_permutations=num_permutations, seed=seed, synthesis=synthesis,
-        human_seg=None if human_seg is None else human_seg[:, mask], ab_dial_grid=ab_dial_grid)
+        human_seg=None if human_seg is None else human_seg[:, mask], ab_dial_grid=ab_dial_grid,
+        diagonal_dial_grid=diagonal_dial_grid)
   return out

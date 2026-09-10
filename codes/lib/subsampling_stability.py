@@ -61,10 +61,12 @@ import math
 import os
 
 import numpy as np
+import pandas as pd
 
 from lib.alpha import alpha_0 as alpha0_of
-from lib.consistency import real_systems, scorer_scores
+from lib.consistency import pool_weighted_tau, real_scorers, real_systems, scorer_scores
 from lib.icc import icc_c1
+from lib.metametrics import NEEDS_SEGMENT_SCORES
 from lib.reweight_exact import solve_w_exact
 from mwb.mqm_scoring import load_system_scores
 
@@ -536,3 +538,247 @@ def paired_stability_icc(
       'n_draws_used_natural': used_nat, 'n_draws_used_reweighted': used_rw,
       'mean_ess_reweighted': mean_ess_rw,
   }
+
+
+def leave_p_out_generalizability(
+    dataset: str,
+    metametric: str,
+    p: int = 1,
+    root: str = '.',
+    exclude_outliers: bool = True,
+    systems: list[str] | None = None,
+    max_workers: int | None = None,
+    transpose: bool = False,
+    target_alpha: float | None = None,
+) -> dict:
+  """ICC(C,1) across all C(K,p) exhaustive leave-p-out (LpO) subsets of a
+  dataset's pool D (|D|=K): every size-p combination of systems dropped
+  from D gives one subset D minus that combo, each scored ONCE and
+  treated as one RATER; scorers are the objects. p=1 (the default) is
+  plain leave-one-out (LOO): C(K,1)=K raters, one per excluded system.
+  Every subset is used whenever feasible (see target_alpha below) -- this
+  is generalizability_stability's design specialized to the single
+  fully-exhaustive case K_prime=K-p, B=C(K,p) (every size-(K-p) subset of
+  a size-K pool IS a leave-p-out subset, one per dropped combo), but
+  implemented directly -- explicit combo exclusion (itertools.combinations,
+  not draw_subsets' rejection sampler) via the same picklable
+  _score_one_draw worker, dispatched to a shared process pool -- so raters
+  are labeled by which combo they exclude rather than an opaque draw
+  index, and there's no sampling variance to worry about. C(K,p) grows
+  fast with p (e.g. C(16,2)=120 vs C(16,1)=16) -- still cheap at this
+  project's K~11-17 for p=1 or 2, but a caller sweeping larger p should
+  mind the cost.
+
+  target_alpha (default None = natural/uniform weight): None scores every
+  LpO subset at uniform weight, same as scorer_scores' default and never
+  infeasible. A float instead reweights EVERY LpO subset to that SAME
+  fixed target (lib.reweight_exact.solve_w_exact via _score_one_draw, same
+  "one shared target across every rater" convention as
+  generalizability_stability's own reweighted condition) -- typically a
+  property of the FULL, un-LpO'd pool D (e.g. alpha_0(D) or the median of
+  D's own pairwise alpha_ij's, lib.alpha.pairwise_alphas), passed in by
+  the caller rather than recomputed here, since a dropped-combo subset has
+  no privileged natural target of its own in this design (contrast
+  type-8's upsampling, which targets alpha_0(D') of the SMALLER pool). An
+  LpO subset for which target_alpha falls outside its own reachable
+  [alpha_min, alpha_max] range (Corollary 2) is INFEASIBLE and dropped
+  from the rater set for this call only -- tracked in
+  `n_infeasible`/`n_raters_used`, same convention as pairwise_stability/
+  generalizability_stability's own infeasible-draw handling. Needs >= 2
+  raters to survive for icc_c1; fewer and `icc` is NaN.
+
+  Needs K - p >= 2 (every LpO subset still has >= 2 systems to score) and
+  C(K,p) >= 2 (>= 2 raters for icc_c1) -- raises ValueError below either
+  bound, mirroring generalizability_stability's own K_prime bound check.
+
+  Objects (the ICC matrix's rows, before any `transpose`) are restricted
+  to lib.consistency.real_scorers(dataset, systems=full_systems,
+  require_seg_scores=...) -- the project's canonical scorer screen (drops
+  constant-score sentinels and deduplicates byte-identical WMT
+  submissions), evaluated once on the FULL pool D, not re-screened per LpO
+  subset -- so the scorer universe is fixed across all raters and only
+  actual coverage gaps (see next paragraph) can still drop one.
+  require_seg_scores is tied to whether `metametric` is in
+  NEEDS_SEGMENT_SCORES (currently just spa), matching scorer_scores' own
+  internal segment-coverage requirement for those metametrics.
+
+  A real_scorers-screened scorer missing a valid score on ANY LpO subset
+  used is ALSO dropped (icc_c1 needs a fully-crossed, no-missing-cells
+  matrix), reported separately in `scorers_dropped` -- same convention as
+  generalizability_stability.
+
+  transpose (default False, MATCHES the caller's original request -- "each
+  LpO meta-evaluation is a RATER" -- and is the orientation you almost
+  certainly want): False keeps scorers as objects, the C(K,p) LpO subsets
+  as raters. True swaps the matrix (LpO subsets become the objects,
+  screened scorers become the raters) -- a DIFFERENT, NOT
+  transpose-invariant question (icc_c1 excludes rater main effects, so
+  scorers' hugely-varying absolute score scale is correctly ignored as
+  raters but pollutes between-object variance as objects). Exists purely
+  as a diagnostic to confirm orientation sensitivity, not as an
+  alternative statistic to report as a headline result -- per project
+  convention as of this session, DO NOT run transpose=True again (already
+  used once to confirm an axis-swap bug elsewhere)."""
+  full_systems, outliers, combos, scores_by_combo, ess_by_combo, used_combos, n_infeasible = (
+      _score_lpo_combos(dataset, metametric, p, root, exclude_outliers, systems,
+                         max_workers, target_alpha, 'leave_p_out_generalizability'))
+  K = len(full_systems)
+
+  natural_full = scorer_scores(dataset, metametric, root=root, systems=full_systems)
+  canonical_scorers = real_scorers(dataset, root=root, systems=full_systems,
+                                    require_seg_scores=(metametric in NEEDS_SEGMENT_SCORES))
+  scorers = sorted(set(canonical_scorers) & set(natural_full.index))
+
+  rows = {s: [scores_by_combo[combo].get(s, float('nan')) for combo in used_combos]
+          for s in scorers}
+  kept = [s for s in scorers if not any(v != v for v in rows[s])]
+  dropped = [s for s in scorers if s not in set(kept)]
+  mean_ess = float(np.mean(list(ess_by_combo.values()))) if ess_by_combo else float('nan')
+
+  if len(kept) < 2 or len(used_combos) < 2:
+    icc = float('nan')
+  else:
+    X = np.array([rows[s] for s in kept], dtype=float)  # [n_scorers, n_raters_used]
+    icc = icc_c1(X.T if transpose else X)
+
+  return {
+      'dataset': dataset, 'metametric': metametric, 'K': K, 'p': p,
+      'target_alpha': target_alpha, 'dropped_combos': combos, 'used_combos': used_combos,
+      'icc': icc, 'transpose': transpose, 'mean_ess': mean_ess,
+      'n_scorers_used': len(kept), 'n_scorers_dropped': len(dropped),
+      'scorers_dropped': dropped, 'outliers_dropped': outliers,
+      'n_raters_total': len(combos), 'n_raters_used': len(used_combos),
+      'n_infeasible': n_infeasible,
+  }
+
+
+def _score_lpo_combos(
+    dataset: str, metametric: str, p: int, root: str, exclude_outliers: bool,
+    systems: list[str] | None, max_workers: int | None, target_alpha: float | None,
+    caller_name: str,
+) -> tuple[list[str], list[str], list[tuple], dict[tuple, dict], dict[tuple, float],
+           list[tuple], int]:
+  """Shared dispatch step of leave_p_out_generalizability and leave_p_out_tau:
+  builds the C(K,p) dropped-combo jobs, scores each once (parallel, via
+  _score_one_draw) and returns everything both callers need to build their
+  own statistic (an ICC matrix vs. pool_weighted_tau's rankings dict) --
+  see leave_p_out_generalizability's docstring for the full contract
+  (target_alpha semantics, infeasibility handling, etc.), which applies
+  identically here. Returns (full_systems, outliers, combos, scores_by_combo,
+  ess_by_combo, used_combos, n_infeasible)."""
+  if systems is not None:
+    full_systems = list(systems)
+    outliers = []
+  else:
+    full_systems = real_systems(dataset, root=root, exclude_outliers=exclude_outliers)
+    outliers = ([s for s in real_systems(dataset, root=root, exclude_outliers=False)
+                 if s not in set(full_systems)] if exclude_outliers else [])
+  K = len(full_systems)
+  n_combos = math.comb(K, p) if K >= p >= 0 else 0
+  if K - p < 2 or n_combos < 2:
+    raise ValueError(f'{caller_name} needs K-p>=2 and C(K,p)>=2, '
+                      f'got K={K}, p={p} (C(K,p)={n_combos}) for {dataset!r}')
+
+  combos = list(itertools.combinations(full_systems, p))
+  jobs = [(dataset, metametric, root, [s for s in full_systems if s not in set(combo)],
+           target_alpha) for combo in combos]
+
+  scores_by_combo: dict[tuple, dict] = {}
+  ess_by_combo: dict[tuple, float] = {}
+  with cf.ProcessPoolExecutor(max_workers=max_workers or os.cpu_count()) as ex:
+    future_to_combo = {ex.submit(_score_one_draw, job): combo
+                        for job, combo in zip(jobs, combos)}
+    for fut in cf.as_completed(future_to_combo):
+      combo = future_to_combo[fut]
+      scores_dict, ess = fut.result()
+      if scores_dict is not None:  # None only when target_alpha was infeasible for this combo
+        scores_by_combo[combo] = scores_dict
+        ess_by_combo[combo] = ess
+  if target_alpha is None:
+    assert len(scores_by_combo) == len(combos)  # natural condition is never infeasible
+  used_combos = [c for c in combos if c in scores_by_combo]  # preserve combinations() order
+  n_infeasible = len(combos) - len(used_combos)
+
+  return full_systems, outliers, combos, scores_by_combo, ess_by_combo, used_combos, n_infeasible
+
+
+def leave_p_out_tau(
+    dataset: str,
+    metametric: str,
+    p: int = 1,
+    root: str = '.',
+    exclude_outliers: bool = True,
+    systems: list[str] | None = None,
+    max_workers: int | None = None,
+    target_alpha: float | None = None,
+) -> dict:
+  """Kendall's tau-a analogue of leave_p_out_generalizability: same C(K,p)
+  exhaustive leave-p-out (LpO) raters (each scored once, natural or
+  reweighted to a shared fixed target_alpha -- identical semantics and
+  infeasibility handling to leave_p_out_generalizability, via the same
+  shared dispatch helper, _score_lpo_combos), but pooled via
+  lib.consistency.pool_weighted_tau instead of icc_c1's two-way ANOVA --
+  the SAME pooling convention this project already uses for cross-dataset
+  scorer-ranking consistency (action_plan.md 6.5): every pair of raters'
+  scorer rankings is compared, concordant/discordant counts (tau-a
+  convention: ties drop out of the numerator but still count in the
+  denominator) are summed across ALL C(n_raters_used,2) rater-pairs x
+  scorer-pairs, and tau is computed ONCE from those pooled totals -- not a
+  plain average of per-pair taus.
+
+  Unlike icc_c1, pool_weighted_tau does NOT need a fully-crossed matrix:
+  each rater-pair only needs the scorers THAT PAIR shares, so a scorer
+  missing from one rater's LpO subset still contributes to every other
+  pair it IS present in, rather than being dropped globally the way
+  leave_p_out_generalizability's `scorers_dropped` works. Objects are
+  still restricted up front to lib.consistency.real_scorers(dataset,
+  systems=full_systems, require_seg_scores=...), the project's canonical
+  scorer screen -- same as leave_p_out_generalizability."""
+  full_systems, outliers, combos, scores_by_combo, ess_by_combo, used_combos, n_infeasible = (
+      _score_lpo_combos(dataset, metametric, p, root, exclude_outliers, systems,
+                         max_workers, target_alpha, 'leave_p_out_tau'))
+  K = len(full_systems)
+
+  natural_full = scorer_scores(dataset, metametric, root=root, systems=full_systems)
+  canonical_scorers = set(real_scorers(
+      dataset, root=root, systems=full_systems,
+      require_seg_scores=(metametric in NEEDS_SEGMENT_SCORES))) & set(natural_full.index)
+
+  rankings = {}
+  for combo in used_combos:
+    s = pd.Series(scores_by_combo[combo], dtype=float)
+    rankings[combo] = s[s.index.isin(canonical_scorers)]
+  mean_ess = float(np.mean(list(ess_by_combo.values()))) if ess_by_combo else float('nan')
+
+  if len(used_combos) < 2:
+    tau, total_weight, pair_results = float('nan'), 0, []
+  else:
+    tau, total_weight, pair_results = pool_weighted_tau(rankings, list(rankings.keys()))
+
+  return {
+      'dataset': dataset, 'metametric': metametric, 'K': K, 'p': p,
+      'target_alpha': target_alpha, 'tau': tau, 'total_weight': total_weight,
+      'mean_ess': mean_ess, 'n_scorers_canonical': len(canonical_scorers),
+      'outliers_dropped': outliers, 'n_raters_total': len(combos),
+      'n_raters_used': len(used_combos), 'n_infeasible': n_infeasible,
+  }
+
+
+def loo_generalizability(
+    dataset: str,
+    metametric: str,
+    root: str = '.',
+    exclude_outliers: bool = True,
+    systems: list[str] | None = None,
+    max_workers: int | None = None,
+    transpose: bool = False,
+    target_alpha: float | None = None,
+) -> dict:
+  """Plain leave-ONE-out: leave_p_out_generalizability(..., p=1). Kept as a
+  distinct name since p=1 is this project's primary/most-used case (K
+  raters, one per excluded system) -- see that function's docstring for
+  the full generalized (leave-p-out) contract, which this just forwards
+  to."""
+  return leave_p_out_generalizability(
+      dataset, metametric, p=1, root=root, exclude_outliers=exclude_outliers,
+      systems=systems, max_workers=max_workers, transpose=transpose, target_alpha=target_alpha)
