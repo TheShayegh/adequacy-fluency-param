@@ -101,10 +101,20 @@ ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 # inventory_<topic>/ convention (see e.g. artifacts/inventory_alpha_table/).
 ARTIFACTS = os.path.join(ROOT, 'artifacts', 'inventory_beta_ess_preference')
 
-# 0 -> red, 0.5 -> purple, 1 -> blue, as specified. Purple (not a neutral
-# gray) at the midpoint is a deliberate choice here: the two poles are the
-# two aspects, and their blend reads as "no preference" rather than as
-# "no data".
+# Colormap stops, low -> high, evenly spaced over [0, 1]:
+#   0.00 yellow | 0.25 red | 0.50 purple | 0.75 blue | 1.00 black
+#
+# Five hues rather than three, because the scale must stay pinned to [0, 1]
+# for cross-dataset comparability while the datasets themselves occupy very
+# different, narrow bands -- ende22 lives at 0.83-0.91, ted_ende crosses
+# 0.5, jazh24 sits at 0.33-0.65. A three-stop ramp leaves most of those
+# bands in a single hue. More stops raise the colour change per unit of
+# preference everywhere along the range at once, which a warp of the scale
+# cannot do: any warp has to pick a region to magnify, and would flatten
+# whichever datasets live elsewhere.
+#
+# Purple stays at 0.5, so the neutral point is still the point where the two
+# aspect hues meet rather than an arbitrary colour.
 # The committed grid resolution: 8 equal-width bins on BOTH axes, for every
 # dataset and under both samplers, so the cell layout is identical across
 # figures and only the tick labels change.
@@ -124,8 +134,9 @@ ARTIFACTS = os.path.join(ROOT, 'artifacts', 'inventory_beta_ess_preference')
 # concentrated, to ~0.02 on ted_ende.
 DEFAULT_N_BINS = 8
 
+PREFERENCE_CMAP_STOPS = ['#ffcc00', '#d62728', '#7b3f99', '#1f5fbf', '#000000']
 PREFERENCE_CMAP = LinearSegmentedColormap.from_list(
-    'adequacy_fluency', ['#d62728', '#7b3f99', '#1f5fbf'], N=512)
+    'adequacy_fluency', PREFERENCE_CMAP_STOPS, N=512)
 
 # ---------------------------------------------------------------------------
 # FIGURE CONFIGURATION -- every visual choice lives here; draw() reads these
@@ -161,6 +172,17 @@ TICK_PAD = 25               # gap between ticks and their labels
 # straight onto the tick labels. Positive pad instead -- the font sizes are
 # what follow Figure 1, not this.
 LABEL_PAD = 30
+
+# How each cell renders its mean +- std spread.
+#   'triangles' -- split along the anti-diagonal: lower-left filled at
+#                  mean - std, upper-right at mean + std. Two flat colors.
+#   'gradient'  -- a continuous vertical ramp, mean - std at the cell's
+#                  bottom edge to mean + std at its top. EXPLORATORY.
+# Both encode the same two numbers; the gradient reads the spread as a
+# smooth extent rather than as two discrete patches, at the cost of no
+# longer showing the two endpoint colors as flat, directly comparable areas.
+CELL_STYLE = 'gradient'
+GRADIENT_STEPS = 256        # vertical samples in a 'gradient' cell
 
 # Per-cell "mean +- std" text. CELL_FONTSIZE is sized to nearly fill a cell;
 # it is a plain number rather than something derived from the grid, so it
@@ -266,16 +288,27 @@ def draw(stats, beta_edges, ess_edges, title, out_base, formats=('pdf', 'png')):
         continue
 
       s_ = 0.0 if not np.isfinite(std[r, c]) else std[r, c]
-      # Upper-right triangle: mean + std. Lower-left: mean - std. Clipped to
-      # the colormap's [0, 1] domain, which is also the score's own range.
-      upper = PREFERENCE_CMAP(norm(np.clip(mean[r, c] + s_, 0.0, 1.0)))
-      lower = PREFERENCE_CMAP(norm(np.clip(mean[r, c] - s_, 0.0, 1.0)))
-      ax.add_patch(Polygon([(x0, y0), (x1, y0), (x0, y1)], closed=True,
-                           facecolor=lower, edgecolor='none'))
-      ax.add_patch(Polygon([(x1, y0), (x1, y1), (x0, y1)], closed=True,
-                           facecolor=upper, edgecolor='none'))
+      # Both styles encode the same interval, clipped to the colormap's
+      # [0, 1] domain -- which is also the preference score's own range.
+      lo_v = float(np.clip(mean[r, c] - s_, 0.0, 1.0))
+      hi_v = float(np.clip(mean[r, c] + s_, 0.0, 1.0))
+
+      if CELL_STYLE == 'gradient':
+        # A tall 1-column image spanning the cell. origin='lower' puts row 0
+        # at the bottom, so the ramp runs mean-std (bottom) -> mean+std
+        # (top). aspect='auto' is required: imshow otherwise locks the axes
+        # to equal aspect and fights BOX_ASPECT.
+        ramp = np.linspace(lo_v, hi_v, GRADIENT_STEPS).reshape(-1, 1)
+        ax.imshow(ramp, extent=(x0, x1, y0, y1), origin='lower', aspect='auto',
+                  cmap=PREFERENCE_CMAP, norm=norm, interpolation='bilinear', zorder=1)
+      else:
+        ax.add_patch(Polygon([(x0, y0), (x1, y0), (x0, y1)], closed=True,
+                             facecolor=PREFERENCE_CMAP(norm(lo_v)), edgecolor='none'))
+        ax.add_patch(Polygon([(x1, y0), (x1, y1), (x0, y1)], closed=True,
+                             facecolor=PREFERENCE_CMAP(norm(hi_v)), edgecolor='none'))
       ax.add_patch(Polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], closed=True,
-                           facecolor='none', edgecolor=GRIDLINE_COLOR, linewidth=GRIDLINE_WIDTH))
+                           facecolor='none', edgecolor=GRIDLINE_COLOR,
+                           linewidth=GRIDLINE_WIDTH, zorder=3))
 
       ax.text(0.5 * (x0 + x1), 0.5 * (y0 + y1),
               f'{mean[r, c]:.2f}\n$\\pm${s_:.2f}',
@@ -399,6 +432,13 @@ if __name__ == '__main__':
                        'exists for windows holding millions of points. True population '
                        'counts are always reported in the diagnostic table alongside the '
                        'scored counts, so a capped cell is visible as such.')
+  ap.add_argument('--save-points', type=int, default=0,
+                  help='also save a random subsample of this many individual scored '
+                       'weightings as <tag>_points.npz: their beta, ESS, preference and log '
+                       'importance weight. Cell statistics aggregate these away, so any '
+                       'analysis of the beta-preference relation that should see the '
+                       'within-cell scatter (e.g. an ungrouped correlation) needs them. '
+                       '0 = do not save.')
   ap.add_argument('--seed', type=int, default=0)
   ap.add_argument('--tag', default=None)
   args = ap.parse_args()
@@ -436,6 +476,7 @@ if __name__ == '__main__':
              f'lattice) or lower --ess-lo-frac')
 
   log_iw = None
+  cov_all = None
   if args.sampler == 'lattice':
     def lat_prog(done, total, kept):
       print(f'  lattice {done:,}/{total:,} kept {kept:,}', file=sys.stderr, end='\r')
@@ -456,7 +497,7 @@ if __name__ == '__main__':
     def smp_prog(done, total, kept):
       print(f'  sampled {done:,}/{total:,} kept {kept:,}', file=sys.stderr, end='\r')
 
-    xs, beta_all, ess_all, log_iw, n_total = sample_simplex_beta_ess(
+    xs, beta_all, ess_all, log_iw, cov_all, n_total = sample_simplex_beta_ess(
         a, f, args.n_samples, alphas, ess_lo=ess_window[0], ess_hi=ess_window[1],
         seed=args.seed, progress=smp_prog)
     print(f'\ndrew {n_total:,} points; {len(xs):,} inside the ESS window '
@@ -572,6 +613,22 @@ if __name__ == '__main__':
   np.savez(base + '.npz', mean=mean, std=std, counts=counts, scored=scored, n_eff=n_eff,
            beta_edges=beta_edges, ess_edges=ess_edges, K=K, beta_0=b0,
            dataset=args.dataset, grid_n=grid_n, n_donors=len(tables), sampler=args.sampler)
+
+  if args.save_points:
+    keep_pts = np.flatnonzero(np.isfinite(pref))
+    if len(keep_pts) > args.save_points:
+      keep_pts = rng.choice(keep_pts, size=args.save_points, replace=False)
+    np.savez(base + '_points.npz',
+             beta=beta_all[keep][keep_pts].astype(np.float32),
+             ess=ess_all[keep][keep_pts].astype(np.float32),
+             pref=pref[keep_pts].astype(np.float32),
+             log_iw=(np.zeros(len(keep_pts), np.float32) if log_iw is None
+                     else log_iw[keep][keep_pts].astype(np.float32)),
+             cov=(np.full(len(keep_pts), np.nan, np.float32) if cov_all is None
+                  else cov_all[keep][keep_pts].astype(np.float32)),
+             wmax=xs[keep][keep_pts].max(axis=1).astype(np.float32),
+             dataset=args.dataset, K=K, beta_0=b0, sampler=args.sampler)
+    print(f'saved {len(keep_pts):,} individual weightings to {base}_points.npz', file=sys.stderr)
 
   md = base + '_cells.md'
   with open(md, 'w') as fh:

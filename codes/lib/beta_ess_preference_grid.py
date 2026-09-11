@@ -440,7 +440,7 @@ def sample_simplex_beta_ess(
   a = np.asarray(a, dtype=float)
   f = np.asarray(f, dtype=float)
 
-  w_parts, beta_parts, ess_parts, iw_parts = [], [], [], []
+  w_parts, beta_parts, ess_parts, iw_parts, cov_parts = [], [], [], [], []
   drawn = 0
   while drawn < n_samples:
     m = min(chunk, n_samples - drawn)
@@ -470,17 +470,22 @@ def sample_simplex_beta_ess(
         var_f = np.maximum((xk * f ** 2).sum(1) - mu_f ** 2, 0.0)
         den = var_a + var_f
         beta = np.where(den > 0, var_a / den, np.nan)
+      # Sigma(a,f;w), the weighted adequacy-fluency covariance -- another
+      # quadratic form in w, carried alongside beta so that residual analyses
+      # can ask whether it, rather than beta, drives the preference.
+      cov = (xk * (a * f)).sum(1) - mu_a * mu_f
       w_parts.append(xk)
       beta_parts.append(beta)
       ess_parts.append(essk)
+      cov_parts.append(cov)
       iw_parts.append(-_log_dirichlet_mixture_density(xk, alphas))
     if progress is not None:
       progress(drawn, n_samples, sum(len(p) for p in w_parts))
 
   if not w_parts:
-    return np.zeros((0, K)), np.zeros(0), np.zeros(0), np.zeros(0), drawn
+    return (np.zeros((0, K)), np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0), drawn)
   return (np.concatenate(w_parts), np.concatenate(beta_parts), np.concatenate(ess_parts),
-          np.concatenate(iw_parts), drawn)
+          np.concatenate(iw_parts), np.concatenate(cov_parts), drawn)
 
 
 def weighted_mean_std(v: np.ndarray, log_iw: np.ndarray | None) -> tuple[float, float, float]:
