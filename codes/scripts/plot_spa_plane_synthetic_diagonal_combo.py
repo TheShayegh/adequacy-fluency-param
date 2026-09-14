@@ -79,7 +79,7 @@ _STYLE = {
 MARKER_LINEWIDTH = {'T': 6.0}  # '+' is stroke-only -- default scatter linewidth reads as thin
 _LABEL_DESC = {
     'D': 'Adequacy-fluency',
-    'T': 'MQM adjerence',
+    'T': 'MQM adherence',
     'J': 'Explainability by MQM',
 }
 _LEGEND_COLOR = {
