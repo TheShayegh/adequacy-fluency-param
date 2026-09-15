@@ -4,8 +4,9 @@ __pycache__/
 *.pyc
 .claude/
 .vscode/
-external/
+output/
+external/mt-metrics-eval-data/
+
+# Legacy local exploratory-research dump, predates this repo's cleanup;
+# kept on disk but never tracked.
 artifacts/
-material/prior_work/
-material/Mind Which Bird You Favour.pdf
-material/*

@@ -1,0 +1,6 @@
+[submodule "external/mt-metrics-eval"]
+	path = external/mt-metrics-eval
+	url = https://github.com/google-research/mt-metrics-eval
+[submodule "external/wmt-mqm-human-evaluation"]
+	path = external/wmt-mqm-human-evaluation
+	url = https://github.com/google/wmt-mqm-human-evaluation
