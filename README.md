@@ -24,21 +24,16 @@ codebase says "alpha," it means the paper's β. The code's own `beta`
 (`alpha_to_beta`/`beta_to_alpha`) is a *different* quantity — the paper's
 footnote reparameterization β_std — and does not appear in any paper table.
 
-## Install
+## Setup
+
+Requires Python ≥3.9.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate   # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
+bash setup.sh
 ```
 
-## Data setup
-
-```bash
-bash setup/fetch_data.sh
-```
-
-This fetches the two git submodules this project reads at runtime —
+This creates `.venv` and installs `requirements.txt` into it, then fetches
+the two git submodules this project reads at runtime —
 [`mt-metrics-eval`](https://github.com/google-research/mt-metrics-eval)
 (the WMT Metrics Shared Task toolkit; only its `score_mqm.py` converter
 logic is reproduced, not imported, since that package needs Python ≥3.10)
@@ -128,6 +123,15 @@ are specific cases of a more general dial-based construction in
 | Adequacy–fluency | `donor_family_additive_mean_diagonal` (dial on adequacy, `-`dial on fluency, simultaneously) |
 | Explainability-by-MQM | `donor_family_joint` (the `'offset'` method's group-mean decomposition, conditioned on the *joint* (adequacy, fluency) pair) |
 
+The paper's footnote to the MQM-adherence family also describes two more,
+single-aspect variants it excludes from the main analysis ("the partial
+correlation between the two aspects confounds their interpretation"):
+`donor_family_adequacy_adherence` and `donor_family_fluency_adherence`,
+the same construction retargeted at Adequacy MQM or Fluency MQM alone
+instead of AllMQM. Supported as named functions for anyone who wants to
+run that excluded comparison themselves; not wired into the `cli.py`
+pipeline, since the paper reports no figure or table for them.
+
 Every family shares a `dial=0` anchor (the real donor scorer, unchanged);
 larger `|dial|` moves further toward (or past) the family's target
 endpoint. `mwb/lib/synthetic_scorer_orientation.py`'s `orientation_score`
@@ -141,15 +145,7 @@ adherence, explainability by MQM) reduce to.
 `mwb/lib/reweight_exact.py`'s solver is validated against
 `mwb/lib/reweight_exhaustive.py`, a brute-force grid search with no
 algorithmic structure to get wrong — a trust anchor, not a production
-solver. `tests/test_reweight_exact.py` encodes one adversarial case found
-this way: a K=4 instance where the target β is *not* attained by any
-full-support KKT point, so a solver that stops at the first stationary
-point it finds (rather than exhaustively checking completeness, as
-`solve_w_exact` does) would silently return the wrong answer. Run with:
-
-```bash
-python -m unittest tests.test_reweight_exact
-```
+solver.
 
 One subtlety when comparing the exact solver against the exhaustive one
 directly: the exhaustive solver's accepted point is only ever within `tol`

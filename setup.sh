@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Sets up a fresh checkout: Python venv + pinned deps, the two git-submodule
-# dependencies, and the external/mt-metrics-eval-data data release (a plain
-# GCS download, not a git repo -- see the comment at that step).
+# The one setup step this project needs: Python venv + pinned deps, the two
+# git-submodule dependencies, and the external/mt-metrics-eval-data data
+# release (a plain GCS download, not a git repo -- see the comment at that
+# step). Safe to re-run -- every step skips work it's already done.
 #
 # Usage (run from anywhere -- paths below resolve relative to this script's
 # own location, not the caller's cwd):
-#   bash setup/fetch_data.sh
+#   bash setup.sh
 #
 # Disk: ~3.1GB (mt-metrics-eval-data's system/metric scores + the two
 # submodules' MQM annotations and converter code).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 echo "[setup] project root: $ROOT"
 

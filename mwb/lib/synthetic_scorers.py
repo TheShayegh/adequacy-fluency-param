@@ -8,8 +8,12 @@ donor_family_additive_mean's 'T' (AllMQM) aspect; the adequacy-fluency
 family is donor_family_additive_mean_diagonal (A=dial, B=-dial); the
 explainability-by-MQM family is donor_family_joint (the 'offset' method's
 m/e/ebar_k decomposition conditioned on the joint (Adequacy, Fluency)
-pair). This module implements the generator and the per-donor sweep
-directly, plus two sibling generators sharing the same
+pair). Two more, footnoted but excluded from the paper's main analysis,
+are named wrappers around the same MQM-adherence construction retargeted
+at a single aspect: donor_family_adequacy_adherence and
+donor_family_fluency_adherence (see their own docstrings for why the
+paper leaves them out). This module implements the generator and the
+per-donor sweep directly, plus two sibling generators sharing the same
 dial=0/family-per-aspect shape but a different endpoint:
 
   - donor_family (synthesis='offset', the original/default): dial=1 is the
@@ -284,6 +288,36 @@ def donor_family_additive_mean(
   else:
     injected_k = abar_k
   return {dial: y + dial * injected_k[:, None] for dial in dial_grid}
+
+
+def donor_family_adequacy_adherence(
+    y: np.ndarray, aspect_a: np.ndarray, dial_grid=DIAL_GRID, standardized: bool = ADDITIVE_MEAN_STANDARDIZED_DEFAULT,
+) -> dict[float, np.ndarray]:
+  """The paper's footnoted Adequacy-MQM-adherence family (Sec. "Scorer
+  Augmentation", footnote to the MQM-adherence family): "the same approach
+  can produce Adequacy MQM-adherence or Fluency MQM-adherence families of
+  synthetic scorers by considering z as the system-level z-score of a or f,
+  respectively." This is exactly donor_family_additive_mean with the
+  AllMQM aspect swapped for Adequacy MQM alone -- a thin, explicitly named
+  wrapper, not new math (it's also exactly what donor_alpha_dial_grid's 'A'
+  family already builds under synthesis='additive_mean').
+
+  The paper excludes this family (and its fluency counterpart) from its
+  main analysis: "the partial correlation between the two aspects
+  [...] confounds their interpretation," since a scorer dialed toward pure
+  Adequacy MQM inevitably drifts toward Fluency MQM too whenever rho(a,f)
+  is far from 0, making "adherence to adequacy specifically" hard to read
+  off cleanly."""
+  return donor_family_additive_mean(y, aspect_a, dial_grid, standardized)
+
+
+def donor_family_fluency_adherence(
+    y: np.ndarray, aspect_b: np.ndarray, dial_grid=DIAL_GRID, standardized: bool = ADDITIVE_MEAN_STANDARDIZED_DEFAULT,
+) -> dict[float, np.ndarray]:
+  """The Fluency-MQM-adherence mirror of donor_family_adequacy_adherence --
+  see that function's docstring for the full derivation and the paper's
+  stated reason for excluding both from its main analysis."""
+  return donor_family_additive_mean(y, aspect_b, dial_grid, standardized)
 
 
 def donor_family_additive_mean_ab(
