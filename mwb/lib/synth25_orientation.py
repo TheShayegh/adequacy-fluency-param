@@ -47,7 +47,10 @@ from mwb.lib.synthetic_scorer_alpha_grid import ASPECT_DONORS, _aspect_donor_seg
 from mwb.lib.synthetic_scorer_orientation import (
     NEG_J_DIAL_GRID, ORIENTATION_ADJACENT_ONLY_DEFAULT, orientation_score,
 )
-from mwb.lib.synthetic_scorers import DIAL_GRID, SYNTHESIS_GENERATORS, donor_family_joint
+from mwb.lib.synthetic_scorers import (
+    DIAGONAL_ADDITIVE_MEAN_DIAL_GRID, DIAL_GRID, SYNTHESIS_GENERATORS,
+    donor_family_additive_mean_diagonal, donor_family_joint,
+)
 
 # Same floor used throughout this project's SPA/synthesis machinery.
 _MIN_SPA_SEGMENTS = 10
@@ -67,6 +70,7 @@ def donor_synth25_orientation(
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
     seed: int = DEFAULT_SEED,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
+    adequacy_fluency_diagonal: bool = False, diagonal_dial_grid=None,
 ) -> dict[str, float] | None:
   """{'A': .., 'B': .., 'T': ..} adequacy/fluency/allmqm orientation of
   `metametric_name` for one donor -- mirrors mwb.lib.synthetic_scorer_
@@ -77,7 +81,16 @@ def donor_synth25_orientation(
   orientation_score (adjacent_only passed straight through -- see its own
   docstring) over the 11 dial values -- one number per family, no alpha
   column. None if this donor lacks sufficient segment coverage (same gate
-  donor_alpha_dial_grid uses)."""
+  donor_alpha_dial_grid uses).
+
+  adequacy_fluency_diagonal=True replaces 'A'/'B' with 'AF' -- the paper's
+  actual Adequacy-fluency family (mwb.lib.synthetic_scorers.
+  donor_family_additive_mean_diagonal), scored on its own
+  diagonal_dial_grid (default DIAGONAL_ADDITIVE_MEAN_DIAL_GRID) instead of
+  `dial_grid`. This is the Shayegh-et-al-2025-baseline counterpart of
+  mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid's identically-
+  named parameter -- see that function for why the paper needs this
+  instead of separate single-aspect families."""
   if metametric_name not in SYNTH25_METAMETRICS:
     raise ValueError(f'metametric_name must be one of {SYNTH25_METAMETRICS}, got {metametric_name!r}')
   build_family = SYNTHESIS_GENERATORS[synthesis]
@@ -104,12 +117,17 @@ def donor_synth25_orientation(
   donor_seg, human_seg = donor_seg[:, mask], human_seg[:, mask]
 
   out = {}
-  for label, aspect in (('A', a_pos), ('B', b_pos), ('T', human_seg)):
-    family = build_family(donor_seg, aspect, dial_grid)
+  if adequacy_fluency_diagonal:
+    families = [('AF', donor_family_additive_mean_diagonal(
+        donor_seg, a_pos, b_pos, diagonal_dial_grid or DIAGONAL_ADDITIVE_MEAN_DIAL_GRID))]
+  else:
+    families = [('A', build_family(donor_seg, a_pos, dial_grid)), ('B', build_family(donor_seg, b_pos, dial_grid))]
+  families.append(('T', build_family(donor_seg, human_seg, dial_grid)))
+  for label, family in families:
     vals = np.array([
         synth25_value(metametric_name, human_seg, family[dial], a_pos, b_pos,
                        tie_seed=tie_seed, num_permutations=num_permutations, seed=seed)
-        for dial in dial_grid
+        for dial in family
     ])
     out[label] = orientation_score(vals, adjacent_only=adjacent_only)
   return out
@@ -128,17 +146,20 @@ def dataset_synth25_orientation(
     seed: int = DEFAULT_SEED,
     progress: bool = False,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
+    adequacy_fluency_diagonal: bool = False, diagonal_dial_grid=None,
 ) -> dict[str, float]:
-  """Dataset-level {'A': .., 'B': .., 'T': ..} -- mean over every usable
-  donor (candidates, default real_scorers(dataset, systems=systems,
-  require_seg_scores=True), this project's canonical scorer screen, same
-  roster compute_scorer_orientation_vs_alpha.py uses) of donor_synth25_
-  orientation. NaN for a family with zero usable donors. progress=True
-  prints one '[i/n] donor (elapsed, eta)' line per donor to stderr (this
-  loop runs a full SPA permutation test per dial per family per donor, so
-  it is not cheap at dozens of donors)."""
+  """Dataset-level {'A': .., 'B': .., 'T': ..} (or {'AF': .., 'T': ..} with
+  adequacy_fluency_diagonal=True -- see donor_synth25_orientation) -- mean
+  over every usable donor (candidates, default real_scorers(dataset,
+  systems=systems, require_seg_scores=True), this project's canonical
+  scorer screen, same roster compute_scorer_orientation_vs_alpha.py uses)
+  of donor_synth25_orientation. NaN for a family with zero usable donors.
+  progress=True prints one '[i/n] donor (elapsed, eta)' line per donor to
+  stderr (this loop runs a full SPA permutation test per dial per family
+  per donor, so it is not cheap at dozens of donors)."""
   if candidates is None:
     candidates = real_scorers(dataset, root=root, systems=systems, require_seg_scores=True)
+  families = ('AF', 'T') if adequacy_fluency_diagonal else ('A', 'B', 'T')
 
   t0 = time.time()
   per_donor = []
@@ -147,7 +168,8 @@ def dataset_synth25_orientation(
     r = donor_synth25_orientation(
         dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
         synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
-        adjacent_only=adjacent_only,
+        adjacent_only=adjacent_only, adequacy_fluency_diagonal=adequacy_fluency_diagonal,
+        diagonal_dial_grid=diagonal_dial_grid,
     )
     if r is not None:
       per_donor.append(r)
@@ -158,7 +180,7 @@ def dataset_synth25_orientation(
       print(f'[{i}/{n}] {donor} {status} (elapsed {elapsed:.1f}s, eta {eta:.1f}s)', file=sys.stderr)
 
   out = {}
-  for label in FAMILIES:
+  for label in families:
     vals = [d[label] for d in per_donor if d[label] == d[label]]
     out[label] = float(np.mean(vals)) if vals else float('nan')
   return out
@@ -176,6 +198,7 @@ def donor_synth25_orientation_all_pools(
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
     seed: int = DEFAULT_SEED,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
+    adequacy_fluency_diagonal: bool = False, diagonal_dial_grid=None,
 ) -> dict[str, dict[str, float]] | None:
   """{pool_name: {'A': .., 'B': .., 'T': ..}} for EVERY pool in POOL_BLOCKS,
   for one donor -- same coverage gate and dial-family construction as
@@ -184,7 +207,8 @@ def donor_synth25_orientation_all_pools(
   pools (synth25_value's blocks argument) instead of rebuilding it per pool,
   since build_family does not depend on which pool the result is later
   compared against. None on insufficient coverage, matching donor_synth25_
-  orientation's gate exactly."""
+  orientation's gate exactly. adequacy_fluency_diagonal/diagonal_dial_grid:
+  see donor_synth25_orientation -- 'AF' replaces 'A'/'B' when True."""
   if metametric_name not in SYNTH25_METAMETRICS:
     raise ValueError(f'metametric_name must be one of {SYNTH25_METAMETRICS}, got {metametric_name!r}')
   build_family = SYNTHESIS_GENERATORS[synthesis]
@@ -211,13 +235,18 @@ def donor_synth25_orientation_all_pools(
   donor_seg, human_seg = donor_seg[:, mask], human_seg[:, mask]
 
   out = {pool_name: {} for pool_name in POOL_BLOCKS}
-  for label, aspect in (('A', a_pos), ('B', b_pos), ('T', human_seg)):
-    family = build_family(donor_seg, aspect, dial_grid)
+  if adequacy_fluency_diagonal:
+    families = [('AF', donor_family_additive_mean_diagonal(
+        donor_seg, a_pos, b_pos, diagonal_dial_grid or DIAGONAL_ADDITIVE_MEAN_DIAL_GRID))]
+  else:
+    families = [('A', build_family(donor_seg, a_pos, dial_grid)), ('B', build_family(donor_seg, b_pos, dial_grid))]
+  families.append(('T', build_family(donor_seg, human_seg, dial_grid)))
+  for label, family in families:
     for pool_name, blocks in POOL_BLOCKS.items():
       vals = np.array([
           synth25_value(metametric_name, human_seg, family[dial], a_pos, b_pos, tie_seed=tie_seed,
                          num_permutations=num_permutations, seed=seed, blocks=blocks)
-          for dial in dial_grid
+          for dial in family
       ])
       out[pool_name][label] = orientation_score(vals, adjacent_only=adjacent_only)
   return out
@@ -230,11 +259,12 @@ def _donor_synth25_job(job):
   reads its own donor's segment file off disk), so this parallelizes with
   no cross-donor coordination needed. Returns (donor, result_or_None)."""
   (dataset, donor, systems, root, metametric_name, dial_grid, synthesis, tie_seed, num_permutations, seed,
-   adjacent_only) = job
+   adjacent_only, adequacy_fluency_diagonal, diagonal_dial_grid) = job
   r = donor_synth25_orientation_all_pools(
       dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
       synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
-      adjacent_only=adjacent_only,
+      adjacent_only=adjacent_only, adequacy_fluency_diagonal=adequacy_fluency_diagonal,
+      diagonal_dial_grid=diagonal_dial_grid,
   )
   return donor, r
 
@@ -253,11 +283,15 @@ def dataset_synth25_orientation_all_pools(
     progress: bool = False,
     adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
     workers: int = 1,
+    adequacy_fluency_diagonal: bool = False, diagonal_dial_grid=None,
 ) -> dict[str, dict[str, float]]:
   """{pool_name: {'A': .., 'B': .., 'T': ..}} for every pool in POOL_BLOCKS --
   the all-pools counterpart of dataset_synth25_orientation, mean over every
   usable donor of donor_synth25_orientation_all_pools. NaN for a
-  (pool, family) cell with zero usable donors.
+  (pool, family) cell with zero usable donors. adequacy_fluency_diagonal/
+  diagonal_dial_grid: see donor_synth25_orientation -- 'AF' replaces
+  'A'/'B' when True (the paper's committed setup, matching Figure 3's
+  markers).
 
   workers: >1 dispatches every donor's donor_synth25_orientation_all_pools
   call to a ProcessPoolExecutor (_donor_synth25_job) instead of running
@@ -267,6 +301,7 @@ def dataset_synth25_orientation_all_pools(
   and donors are independent. Default 1 (sequential, original behavior)."""
   if candidates is None:
     candidates = real_scorers(dataset, root=root, systems=systems, require_seg_scores=True)
+  families = ('AF', 'T') if adequacy_fluency_diagonal else ('A', 'B', 'T')
 
   t0 = time.time()
   per_donor = []
@@ -281,7 +316,7 @@ def dataset_synth25_orientation_all_pools(
 
   if workers > 1:
     jobs = [(dataset, donor, systems, root, metametric_name, dial_grid, synthesis, tie_seed, num_permutations,
-              seed, adjacent_only) for donor in candidates]
+              seed, adjacent_only, adequacy_fluency_diagonal, diagonal_dial_grid) for donor in candidates]
     with cf.ProcessPoolExecutor(max_workers=workers) as ex:
       for i, (donor, r) in enumerate(ex.map(_donor_synth25_job, jobs), 1):
         if r is not None:
@@ -292,7 +327,8 @@ def dataset_synth25_orientation_all_pools(
       r = donor_synth25_orientation_all_pools(
           dataset, donor, systems, root=root, metametric_name=metametric_name, dial_grid=dial_grid,
           synthesis=synthesis, tie_seed=tie_seed, num_permutations=num_permutations, seed=seed,
-          adjacent_only=adjacent_only,
+          adjacent_only=adjacent_only, adequacy_fluency_diagonal=adequacy_fluency_diagonal,
+          diagonal_dial_grid=diagonal_dial_grid,
       )
       if r is not None:
         per_donor.append(r)
@@ -301,7 +337,7 @@ def dataset_synth25_orientation_all_pools(
   out = {}
   for pool_name in POOL_BLOCKS:
     out[pool_name] = {}
-    for label in FAMILIES:
+    for label in families:
       vals = [d[pool_name][label] for d in per_donor if d[pool_name][label] == d[pool_name][label]]
       out[pool_name][label] = float(np.mean(vals)) if vals else float('nan')
   return out
@@ -348,27 +384,32 @@ def save_synth25_orientation(
     orientation: dict[str, float],
 ) -> None:
   """Persists what plot_scorer_orientation_vs_alpha.py's --overlay-synth25
-  needs: just the 3 dataset-level constants plus enough metadata to label
+  needs: just the dataset-level constants (A/B or AF, plus T -- whichever
+  `orientation` has, matching dataset_synth25_orientation's own
+  adequacy_fluency_diagonal-dependent output) plus enough metadata to label
   them -- no alpha/dial grid to store, unlike mwb.lib.synthetic_scorer_
-  orientation's save_orientation_data, since this is 3 numbers, not a
-  curve."""
+  orientation's save_orientation_data, since this is a handful of numbers,
+  not a curve."""
+  extra = {label: np.asarray(float(val)) for label, val in orientation.items()}
   np.savez(
       path, dataset=np.asarray(dataset), metametric=np.asarray(metametric_name),
       synthesis=np.asarray(synthesis), dial_preset=np.asarray(dial_preset), n_donors=np.asarray(int(n_donors)),
-      A=np.asarray(float(orientation['A'])), B=np.asarray(float(orientation['B'])),
-      T=np.asarray(float(orientation['T'])),
+      **extra,
   )
 
 
 def load_synth25_orientation(path: str) -> dict:
   npz = np.load(path)
-  return {
+  out = {
       'dataset': str(npz['dataset']), 'metametric': str(npz['metametric']),
       'synthesis': str(npz['synthesis']),
       'dial_preset': str(npz['dial_preset']) if 'dial_preset' in npz else 'linear',
       'n_donors': int(npz['n_donors']),
-      'A': float(npz['A']), 'B': float(npz['B']), 'T': float(npz['T']),
   }
+  for label in ('A', 'B', 'AF', 'T'):
+    if label in npz:
+      out[label] = float(npz[label])
+  return out
 
 
 def pools_tag(dataset: str, metametric_name: str, synthesis: str = 'offset', dial_preset: str = 'linear') -> str:
@@ -389,33 +430,40 @@ def save_synth25_pools(
 ) -> None:
   """Persists what plot_scorer_orientation_vs_alpha.py's --overlay-synth25
   pool markers need: for every pool_name in POOL_BLOCKS, its own alpha_0
-  (pool_alpha0[pool_name]) and its A/B/T orientation (pool_orientation
-  [pool_name]). pool_names is saved explicitly (not just relying on
+  (pool_alpha0[pool_name]) and its orientation per family (pool_orientation
+  [pool_name], whichever of A/B/AF/T are present -- matching
+  dataset_synth25_orientation_all_pools's own adequacy_fluency_diagonal-
+  dependent output). pool_names is saved explicitly (not just relying on
   POOL_BLOCKS' current definition/order) so a cache stays self-describing
   even if POOL_BLOCKS is later reordered or extended."""
   pool_names = list(POOL_BLOCKS)
+  labels = list(next(iter(pool_orientation.values())))
+  extra = {
+      f'pool_{label}': np.asarray([pool_orientation[p][label] for p in pool_names], dtype=float)
+      for label in labels
+  }
   np.savez(
       path, dataset=np.asarray(dataset), metametric=np.asarray(metametric_name),
       synthesis=np.asarray(synthesis), dial_preset=np.asarray(dial_preset), n_donors=np.asarray(int(n_donors)),
       pool_names=np.asarray(pool_names, dtype='<U32'),
       pool_alpha0=np.asarray([pool_alpha0[p] for p in pool_names], dtype=float),
-      pool_A=np.asarray([pool_orientation[p]['A'] for p in pool_names], dtype=float),
-      pool_B=np.asarray([pool_orientation[p]['B'] for p in pool_names], dtype=float),
-      pool_T=np.asarray([pool_orientation[p]['T'] for p in pool_names], dtype=float),
+      **extra,
   )
 
 
 def load_synth25_pools(path: str) -> dict:
   npz = np.load(path)
   pool_names = [str(p) for p in npz['pool_names']]
-  return {
+  out = {
       'dataset': str(npz['dataset']), 'metametric': str(npz['metametric']), 'synthesis': str(npz['synthesis']),
       'dial_preset': str(npz['dial_preset']), 'n_donors': int(npz['n_donors']), 'pool_names': pool_names,
       'pool_alpha0': dict(zip(pool_names, npz['pool_alpha0'].tolist())),
-      'pool_A': dict(zip(pool_names, npz['pool_A'].tolist())),
-      'pool_B': dict(zip(pool_names, npz['pool_B'].tolist())),
-      'pool_T': dict(zip(pool_names, npz['pool_T'].tolist())),
   }
+  for label in ('A', 'B', 'AF', 'T'):
+    key = f'pool_{label}'
+    if key in npz:
+      out[key] = dict(zip(pool_names, npz[key].tolist()))
+  return out
 
 
 # --- J (Joint) family, negative-dial-only overlay -------------------------
@@ -607,9 +655,9 @@ def pools_tag_J(dataset: str, metametric_name: str, dial_preset: str = 'neg') ->
   component (unlike pools_tag), since J's construction here is always
   offset's donor_family_joint, never a synthesis choice. dial_preset:
   'neg' (default -- NEG_J_DIAL_GRID, the historical/only grid before
-  --green-family ABTJ existed) adds no suffix, keeping existing cache
+  --green-family DiagTJ existed) adds no suffix, keeping existing cache
   filenames valid; 'symmetric' (mwb.lib.synthetic_scorers.ABTJ_J_DIAL_GRID,
-  paired with ABTJ) gets '_sym' so it never collides with a 'neg' cache
+  paired with DiagTJ) gets '_sym' so it never collides with a 'neg' cache
   for the same dataset/metametric."""
   suffix = '' if dial_preset == 'neg' else '_sym'
   return f'{dataset}_{metametric_name}_pools_J{suffix}'

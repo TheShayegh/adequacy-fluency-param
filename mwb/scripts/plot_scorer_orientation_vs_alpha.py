@@ -6,16 +6,20 @@ metametric (spa, pa, or pearson) is read from the cache itself (whichever
 compute_scorer_orientation_vs_alpha.py --metametric produced it). This is
 the paper's main-results plot (Figure 3 and its appendix grid).
 
-Panel 1/2: adequacy_orientation / fluency_orientation vs. alpha -- one
-independent dot per alpha for the mean-across-donors value (no connecting
-line -- see _add_ess_colored_dots for why), colored by ESS: fully
-transparent at/below the absolute floor ESS=1, then a 2-segment cubic
-Hermite spline ramp (SplineReliabilityNorm) up to opaque dark blue/red at
-ESS=K -- plus a dashed reference at 0.5 (no systematic preference) and a
-dotted vertical line at alpha_0(D). Per-donor shadow curves
-(compute_scorer_orientation_vs_alpha.py's A/B/T/J matrices, already cached,
-no recomputation) are optionally drawn behind the mean via --shadow-donors
--- see _draw_orientation_axes's shadow_curves param.
+One independent dot per alpha for each family's mean-across-donors value
+(no connecting line -- see _add_ess_colored_dots for why), colored by ESS:
+fully transparent at/below the absolute floor ESS=1, then a 2-segment
+cubic Hermite spline ramp (SplineReliabilityNorm) up to opaque dark color
+at ESS=K -- plus a dashed reference at 0.5 (no systematic preference) and
+a dotted vertical line at alpha_0(D). In the paper's committed setup
+(--green-family DiagTJ), three families are drawn together: AF ("Adequacy
+over fluency", purple -- the single-dial Adequacy-fluency preference
+family, replacing the separate single-aspect A/B pair), T ("MQM
+adherence", green), and J ("Explainability by MQM", gold) -- matching
+Figure 3's legend exactly. Per-donor shadow curves
+(compute_scorer_orientation_vs_alpha.py's AF/A/B/T/J matrices, already
+cached, no recomputation) are optionally drawn behind the mean via
+--shadow-donors -- see _draw_orientation_axes's shadow_curves param.
 
 Usage: python -m mwb.scripts.plot_scorer_orientation_vs_alpha [--dataset ende21]
            [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa|pearson]
@@ -61,13 +65,19 @@ ARTIFACTS_DIR = os.path.join(ROOT, 'output', 'scorer_orientation')
 
 _PANEL_TITLES = {
     'A': 'Adequacy orientation (A-family)', 'B': 'Fluency orientation (B-family)',
+    'AF': 'Adequacy over fluency (AF-family)',
     'T': 'AllMQM orientation (T-family)', 'J': 'Joint orientation (J-family)',
 }
 # --poster's short legend labels -- everywhere else in this file uses
 # _PANEL_TITLES; this is purely a presentation-render relabeling of the
-# SAME four families (A/B/T/J), not a new taxonomy.
+# SAME families, not a new taxonomy. AF/T/J's poster labels match the
+# paper's own Figure 3 legend text exactly ("Adequacy over fluency", "MQM
+# adherence", "Explainability by MQM"); A/B (the footnoted single-aspect
+# families, not used in the paper's committed --green-family DiagTJ mode)
+# keep their own separate labels.
 _POSTER_PANEL_TITLES = {
-    'A': 'Adequacy family', 'B': 'Fluency family', 'T': 'Total family', 'J': 'Orthigonal family',
+    'A': 'Adequacy family', 'B': 'Fluency family', 'AF': 'Adequacy over fluency',
+    'T': 'MQM adherence', 'J': 'Explainability by MQM',
 }
 # Light/dark pairs per family -- dark end matches the flat colors used
 # elsewhere in this project (mwb.lib.spa_plane's adequacy=blue/fluency=red
@@ -76,17 +86,25 @@ _POSTER_PANEL_TITLES = {
 # construction (T because t=a+b favors neither aspect; J because it
 # conditions on both aspects jointly rather than either alone), which used
 # to get them the same dark green when a cache only ever had one of the
-# two -- --green-family ABTJ caches now have BOTH T and J at once, so they
+# two -- --green-family DiagTJ caches now have BOTH T and J at once, so they
 # need visually distinct colors: T stays dark green, J gets dark gold
 # (darkgoldenrod), chosen to read clearly against green/blue/red at the
-# same low marker alpha.
-_DARK_COLOR = {'A': (0.03, 0.15, 0.35), 'B': (0.35, 0.03, 0.05), 'T': (0.05, 0.30, 0.05), 'J': (0.72, 0.53, 0.04)}
-# --poster's own A/T base colors: pushed further apart in hue (purer blue,
+# same low marker alpha. AF (the paper's actual Adequacy-fluency family,
+# replacing A/B in that same DiagTJ cache) gets a dark purple, matching the
+# paper's own Figure 3 rendering.
+_DARK_COLOR = {
+    'A': (0.03, 0.15, 0.35), 'B': (0.35, 0.03, 0.05), 'AF': (0.25, 0.03, 0.30),
+    'T': (0.05, 0.30, 0.05), 'J': (0.72, 0.53, 0.04),
+}
+# --poster's own base colors: pushed further apart in hue (purer blue,
 # purer green -- less of the shared low-saturation blue-green midtone that
 # made _DARK_COLOR's A/T converge once lightened for the bright markers
 # below) while keeping blue and green as each family's main color, per
 # request.
-_POSTER_DARK_COLOR = {'A': (0.0, 0.05, 0.65), 'B': (0.35, 0.03, 0.05), 'T': (0.0, 0.42, 0.0), 'J': (0.72, 0.53, 0.04)}
+_POSTER_DARK_COLOR = {
+    'A': (0.0, 0.05, 0.65), 'B': (0.35, 0.03, 0.05), 'AF': (0.45, 0.0, 0.55),
+    'T': (0.0, 0.42, 0.0), 'J': (0.72, 0.53, 0.04),
+}
 
 
 def _lighten(rgb, amount=0.6):
@@ -114,7 +132,7 @@ _POOL_MARKERS = {
 _POOL_MARKER_SIZE_LARGE = 45
 _POOL_MARKER_SIZE_DEFAULT = 55
 _POOL_MARKER_SIZE = {'real+adeq+flu': _POOL_MARKER_SIZE_LARGE+10, 'adeq+flu':_POOL_MARKER_SIZE_LARGE-5, 'real+flu':_POOL_MARKER_SIZE_LARGE-5}
-_FAMILY_FILE_PREFIX = {'A': 'adequacy', 'B': 'fluency', 'T': 'allmqm', 'J': 'joint'}
+_FAMILY_FILE_PREFIX = {'A': 'adequacy', 'B': 'fluency', 'AF': 'adequacy_over_fluency', 'T': 'allmqm', 'J': 'joint'}
 
 
 # Fully transparent at/below this ABSOLUTE ESS value, not a fraction of K:
@@ -687,10 +705,10 @@ if __name__ == '__main__':
                        help='which cached dial grid to load/plot -- must match the compute run\'s '
                             "--dial-preset. Default: 'symmetric' (the committed setup, matching "
                             'compute_scorer_orientation_vs_alpha.py\'s own default).')
-  parser.add_argument('--green-family', choices=['default', 'Jneg', 'ABTJ'], default='ABTJ',
+  parser.add_argument('--green-family', choices=['default', 'Jneg', 'DiagTJ'], default='DiagTJ',
                        help='must match the compute run\'s --green-family -- only affects the auto-derived '
-                            'cache tag (appends _Jneg/_ABTJ, see compute_scorer_orientation_vs_alpha.py) '
-                            'when --data/--tag is not given. Default: ABTJ (the committed setup).')
+                            'cache tag (appends _Jneg/_DiagTJ, see compute_scorer_orientation_vs_alpha.py) '
+                            'when --data/--tag is not given. Default: DiagTJ (the paper\'s committed setup).')
   parser.add_argument('--aspect-donors', action=argparse.BooleanOptionalAction, default=False,
                        help='load the ASPECT_DONORS cache (compute_scorer_orientation_vs_alpha.py '
                             '--aspect-donors) and draw one panel per donor instead of the '
@@ -770,7 +788,7 @@ if __name__ == '__main__':
                              args.dial_preset)
     if args.aspect_donors and not args.tag:
       tag += '_aspectdonors'
-    if args.green_family in ('Jneg', 'ABTJ') and not args.tag:
+    if args.green_family in ('Jneg', 'DiagTJ') and not args.tag:
       tag += f'_{args.green_family}'
     data_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
   if not os.path.exists(data_path):
@@ -791,32 +809,32 @@ if __name__ == '__main__':
                 f'--metametric {args.metametric} --synthesis {args.synthesis} --dial-preset {args.dial_preset} '
                 f'--all-pools first')
     synth25_data = load_synth25_pools(synth25_path)
+    pool_families = [lbl for lbl in ('A', 'B', 'AF', 'T') if f'pool_{lbl}' in synth25_data]
     synth25_pools = {
         pool_name: {
             'alpha0': synth25_data['pool_alpha0'][pool_name],
-            'A': synth25_data['pool_A'][pool_name],
-            'B': synth25_data['pool_B'][pool_name],
-            'T': synth25_data['pool_T'][pool_name],
+            **{lbl: synth25_data[f'pool_{lbl}'][pool_name] for lbl in pool_families},
         }
         for pool_name in synth25_data['pool_names']
     }
     synth25_metric_label = synth25_metametric_name.upper()
     print(f'Loaded {synth25_path}: {synth25_metric_label} pools ({synth25_data["n_donors"]} donors):', file=sys.stderr)
     for pool_name, info in synth25_pools.items():
-      print(f'  {pool_name}: alpha_0={info["alpha0"]:.4f} A={info["A"]:.4f} B={info["B"]:.4f} T={info["T"]:.4f}',
-            file=sys.stderr)
+      fields = ' '.join(f'{lbl}={info[lbl]:.4f}' for lbl in pool_families)
+      print(f'  {pool_name}: alpha_0={info["alpha0"]:.4f} {fields}', file=sys.stderr)
 
     # This cache's own third family is J (not T) -- e.g. compute_scorer_
-    # orientation_vs_alpha.py's --green-family Jneg/ABTJ, which keeps A/B
-    # (and, for ABTJ, T) from some other --synthesis but ALSO builds J from
-    # an offset call. mwb.lib.synth25_orientation never computes J alongside
-    # A/B/T in the SAME call (see its module docstring), so it lives in a
-    # SEPARATE cache (pools_tag_J, tagged 'neg' or 'symmetric' depending on
-    # which dial grid J itself used -- 'symmetric' when this cache's OWN
-    # dial_preset is 'symmetric' i.e. an ABTJ cache, 'neg'/historical
-    # NEG_J_DIAL_GRID otherwise, e.g. plain Jneg) -- merge its 'J' value
-    # into each pool's dict alongside the A/B/T already loaded above,
-    # rather than trying to load ONE cache with everything.
+    # orientation_vs_alpha.py's --green-family Jneg/DiagTJ, which keeps
+    # AF/A-B (and, for DiagTJ, T) from some other --synthesis but ALSO
+    # builds J from an offset call. mwb.lib.synth25_orientation never
+    # computes J alongside AF/A/B/T in the SAME call (see its module
+    # docstring), so it lives in a SEPARATE cache (pools_tag_J, tagged
+    # 'neg' or 'symmetric' depending on which dial grid J itself used --
+    # 'symmetric' when this cache's OWN dial_preset is 'symmetric' i.e. a
+    # DiagTJ cache, 'neg'/historical NEG_J_DIAL_GRID otherwise, e.g. plain
+    # Jneg) -- merge its 'J' value into each pool's dict alongside the
+    # AF/A-B/T already loaded above, rather than trying to load ONE cache
+    # with everything.
     if data.get('J') is not None:
       j_dial_preset = 'symmetric' if data['dial_preset'] == 'symmetric' else 'neg'
       synth25_j_tag = synth25_pools_tag_J(data['dataset'], synth25_metametric_name, dial_preset=j_dial_preset)
@@ -861,7 +879,7 @@ if __name__ == '__main__':
   plot_alphas = data['alphas']
   plot_center_alpha = data['center_alpha']
   plot_xlabel = 'β' if args.poster else 'alpha (meta-evaluation balance)'
-  plot_ylabel = 'Faithfullness' if args.poster else 'orientation score'
+  plot_ylabel = 'Preference' if args.poster else 'orientation score'
   if args.beta_axis:
     plot_alphas = alpha_to_beta(plot_alphas)
     plot_center_alpha = float(alpha_to_beta(plot_center_alpha))
@@ -874,22 +892,27 @@ if __name__ == '__main__':
     if loo_points:
       loo_points['alpha0'] = alpha_to_beta(loo_points['alpha0'])
 
-  # Third/fourth families: 'T' (orientation-neutral All-MQM) and/or 'J'
-  # (orientation-neutral Joint) -- whichever are present. Most caches have
-  # at most one (additive/additive_mean's own T, or offset's own J /
-  # --green-family Jneg's swapped-in J); --green-family ABTJ caches have
+  # First family/families: either the paper's committed AF (single-dial
+  # Adequacy-fluency preference, --green-family DiagTJ) or the separate
+  # single-aspect A/B pair (the footnoted, excluded construction) --
+  # whichever this cache actually has, never both. Then the third/fourth
+  # families: 'T' (orientation-neutral All-MQM) and/or 'J' (orientation-
+  # neutral Joint) -- whichever are present. Most caches have at most one
+  # of T/J (additive/additive_mean's own T, or offset's own J /
+  # --green-family Jneg's swapped-in J); --green-family DiagTJ caches have
   # BOTH at once, so this is not an either/or.
-  families = ['A', 'B']
+  families = ['AF'] if data.get('AF') is not None else ['A', 'B']
   if data.get('T') is not None:
     families.append('T')
   if data.get('J') is not None:
     families.append('J')
   families = tuple(families)
-  # Built for every possible family (not just `families`), not just the
-  # ones this cache's curves happen to use: the --overlay-synth25 pool
-  # markers always report A/B/T (mwb.lib.synth25_orientation never computes
-  # J), so an 'offset' cache (whose OWN third family is J) still needs a
-  # 'T' cmap available to draw its T-family pool markers alongside J's dots.
+  # Built for every possible family (not just `families`): the
+  # --overlay-synth25 pool markers report whichever of AF/T or A/B/T
+  # mwb.lib.synth25_orientation computed (matching this cache's own AF-vs-
+  # A/B choice; it never computes J), so an 'offset' cache (whose OWN third
+  # family is J) still needs a 'T' cmap available to draw its T-family pool
+  # markers alongside J's dots.
   # --poster: dots/legend/pool markers get the BRIGHT color (POSTER_DARK_
   # COLOR's more hue-separated blue/green, lightened moderately -- enough
   # to read as "bright" without washing out into near-indistinguishable
@@ -898,10 +921,11 @@ if __name__ == '__main__':
   # two different intensities of the same family color, not two shades
   # that happen to differ by ESS alone.
   base_colors = _POSTER_DARK_COLOR if args.poster else _DARK_COLOR
+  _ALL_FAMILIES = ('A', 'B', 'AF', 'T', 'J')
   family_colors = {label: (_lighten(base_colors[label], amount=0.35) if args.poster else base_colors[label])
-                    for label in ('A', 'B', 'T', 'J')}
-  cmaps = {label: _ess_over_k_cmap(family_colors[label]) for label in ('A', 'B', 'T', 'J')}
-  line_cmaps = {label: _ess_over_k_cmap(base_colors[label]) for label in ('A', 'B', 'T', 'J')}
+                    for label in _ALL_FAMILIES}
+  cmaps = {label: _ess_over_k_cmap(family_colors[label]) for label in _ALL_FAMILIES}
+  line_cmaps = {label: _ess_over_k_cmap(base_colors[label]) for label in _ALL_FAMILIES}
 
   if args.aspect_donors:
     # One square panel per ASPECT_DONORS entry (fixed order, not
@@ -996,15 +1020,15 @@ if __name__ == '__main__':
   loo_suffix = '_loo' if args.overlay_loo else ''
   beta_suffix = '_beta' if args.beta_axis else ''
   if data.get('T') is not None and data.get('J') is not None:
-    # --green-family ABTJ cache (both T and J at once) -- short, distinct
+    # --green-family DiagTJ cache (AF, T, and J at once) -- short, distinct
     # name instead of the long auto-chain above (which was designed around
     # exactly one of T/J ever being present at a time, and is already long
-    # enough without a 5th thing to disambiguate). "DiagTJ" (not "ABTJ"):
-    # the paper's own figure filenames, e.g. orientation__ende21_DiagTJ_
-    # synth25.pdf -- matched exactly here, including the double underscore
-    # and the metametric prefix ("pearson_" for the appendix's Pearson
-    # variant, nothing for the default spa) and the "_nolegend" suffix
-    # (--no-legend, for the multi-panel appendix grid).
+    # enough without a 5th thing to disambiguate). Matches the paper's own
+    # figure filenames exactly, e.g. orientation__ende21_DiagTJ_synth25.pdf
+    # -- including the double underscore and the metametric prefix
+    # ("pearson_" for the appendix's Pearson variant, nothing for the
+    # default spa) and the "_nolegend" suffix (--no-legend, for the
+    # multi-panel appendix grid).
     nolegend_suffix = '' if args.legend else '_nolegend'
     metametric_prefix = '' if data['metametric'] == 'spa' else f'{data["metametric"]}_'
     plot_path = os.path.join(
@@ -1028,13 +1052,14 @@ if __name__ == '__main__':
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)
 
-  # Second family of figures: each of A (adequacy), B (fluency), and the
-  # cache's third family (T=AllMQM or J=Joint) plotted directly against
-  # ESS(alpha)/K -- see _plot_family_vs_ess's docstring for the full
-  # rationale. _plot_family_vs_ess no-ops for whichever of T/J is absent.
-  # Opt-in only (--vs-ess) -- no longer a mandatory side effect of every run.
+  # Second family of figures: each of AF (Adequacy-fluency preference) or
+  # A/B (adequacy, fluency) -- whichever this cache has -- and the cache's
+  # third family (T=AllMQM or J=Joint) plotted directly against ESS(alpha)/K
+  # -- see _plot_family_vs_ess's docstring for the full rationale.
+  # _plot_family_vs_ess no-ops for whichever family is absent. Opt-in only
+  # (--vs-ess) -- no longer a mandatory side effect of every run.
   if args.vs_ess:
-    for family in ('A', 'B', 'T', 'J'):
+    for family in ('A', 'B', 'AF', 'T', 'J'):
       _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_preset_title, ARTIFACTS_DIR,
                            base, grid_suffix, metametric_suffix, synthesis_suffix, dial_preset_suffix,
                            aspectdonors_suffix, green_family_suffix)

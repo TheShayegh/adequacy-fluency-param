@@ -163,36 +163,42 @@ def orientation_tag(
 
 def save_orientation_data(
     path: str, *, dataset: str, alphas, center_alpha: float, K: int, donors: list[str],
-    A: np.ndarray, B: np.ndarray, ess: np.ndarray, dial_grid, metametric: str = 'spa',
-    synthesis: str = 'offset', T: np.ndarray | None = None, J: np.ndarray | None = None,
+    ess: np.ndarray, dial_grid, metametric: str = 'spa',
+    synthesis: str = 'offset', A: np.ndarray | None = None, B: np.ndarray | None = None,
+    AF: np.ndarray | None = None, T: np.ndarray | None = None, J: np.ndarray | None = None,
     dial_preset: str = 'linear',
 ) -> None:
-  """Persists everything plot_scorer_orientation_vs_alpha.py needs: A/B are
-  (n_donors, n_alpha) matrices of per-donor orientation curves, row order ==
-  `donors`. Exactly one of T (the orientation-neutral All-MQM family,
+  """Persists everything plot_scorer_orientation_vs_alpha.py needs. Each of
+  A/B/AF/T/J is an optional (n_donors, n_alpha) matrix of per-donor
+  orientation curves, row order == `donors`. Either (A and B) or AF is
+  expected (AF -- the paper's actual "adequacy over fluency" preference,
+  mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid's
+  adequacy_fluency_diagonal=True family -- replaces the separate single-
+  aspect A/B pair in the paper's committed setup; A/B alone are kept for
+  the footnoted single-aspect-adherence use case and older caches).
+  Exactly one of T (the orientation-neutral All-MQM family,
   synthesis='additive'/'additive_mean') or J (the Joint family,
-  synthesis='offset') is expected, matching mwb.lib.synthetic_scorer_alpha_grid.
-  donor_alpha_dial_grid's output for that synthesis -- both are optional,
-  for backward compatibility with caches written before either existed (or
-  before J replaced T for offset caches). ess is (n_alpha,) ESS(w*(alpha))
-  -- depends only on alpha, not on donor, since w*(alpha) is shared across
-  every donor (mwb.lib.reweight_exact.solve_w_exact
-  solved once per alpha). metametric records which weighted meta-metric
-  ('spa' or 'pa') A/B/T/J were scored with. synthesis records which mwb.lib.
-  synthetic_scorers dial family ('offset', 'additive', or 'additive_mean')
-  built them. dial_preset records which named dial grid ('linear' or
-  'geometric') `dial_grid`'s values came from, purely for display --
-  dial_grid itself already has the actual numbers."""
+  synthesis='offset') is expected, matching donor_alpha_dial_grid's output
+  for that synthesis -- both are optional, for backward compatibility with
+  caches written before either existed (or before J replaced T for offset
+  caches). ess is (n_alpha,) ESS(w*(alpha)) -- depends only on alpha, not
+  on donor, since w*(alpha) is shared across every donor
+  (mwb.lib.reweight_exact.solve_w_exact solved once per alpha). metametric
+  records which weighted meta-metric ('spa' or 'pa') the families were
+  scored with. synthesis records which mwb.lib.synthetic_scorers dial
+  family ('offset', 'additive', or 'additive_mean') built them (moot for
+  AF, which is always additive_mean-style regardless of synthesis).
+  dial_preset records which named dial grid ('linear' or 'geometric')
+  `dial_grid`'s values came from, purely for display -- dial_grid itself
+  already has the actual numbers."""
   extra = {}
-  if T is not None:
-    extra['T'] = np.asarray(T, dtype=float)
-  if J is not None:
-    extra['J'] = np.asarray(J, dtype=float)
+  for label, arr in (('A', A), ('B', B), ('AF', AF), ('T', T), ('J', J)):
+    if arr is not None:
+      extra[label] = np.asarray(arr, dtype=float)
   np.savez(
       path, dataset=np.asarray(dataset), alphas=np.asarray(alphas, dtype=float),
       center_alpha=np.asarray(float(center_alpha)), K=np.asarray(int(K)),
-      donors=np.asarray(donors, dtype='<U128'), A=np.asarray(A, dtype=float),
-      B=np.asarray(B, dtype=float), ess=np.asarray(ess, dtype=float),
+      donors=np.asarray(donors, dtype='<U128'), ess=np.asarray(ess, dtype=float),
       dial_grid=np.asarray(dial_grid, dtype=float), metametric=np.asarray(metametric),
       synthesis=np.asarray(synthesis), dial_preset=np.asarray(dial_preset), **extra,
   )
@@ -209,8 +215,9 @@ def load_orientation_data(path: str) -> dict:
       'metametric': str(npz['metametric']) if 'metametric' in npz else 'spa',
       'synthesis': str(npz['synthesis']) if 'synthesis' in npz else 'offset',
       'dial_preset': str(npz['dial_preset']) if 'dial_preset' in npz else 'linear',
-      'A': npz['A'],
-      'B': npz['B'],
+      'A': npz['A'] if 'A' in npz else None,
+      'B': npz['B'] if 'B' in npz else None,
+      'AF': npz['AF'] if 'AF' in npz else None,
       'T': npz['T'] if 'T' in npz else None,
       'J': npz['J'] if 'J' in npz else None,
       'ess': npz['ess'],
@@ -275,14 +282,17 @@ def donor_orientation_by_alpha(
     grids: dict, adjacent_only: bool = ORIENTATION_ADJACENT_ONLY_DEFAULT,
 ) -> dict[str, np.ndarray]:
   """{'A': (n_alpha,) adequacy_orientation per alpha, 'B': (n_alpha,)
-  fluency_orientation per alpha, 'T' or 'J': (n_alpha,) allmqm_orientation
-  or joint_orientation per alpha (whichever donor_alpha_dial_grid built,
-  depending on synthesis)} for one donor, from mwb.lib.synthetic_scorer_alpha_grid.
-  donor_alpha_dial_grid's output -- one orientation_score per column
-  (alpha), read off that column's dial-ordered SPA values. adjacent_only
-  passed straight through to orientation_score."""
+  fluency_orientation per alpha, 'AF': (n_alpha,) the paper's actual
+  "adequacy over fluency" preference (donor_alpha_dial_grid's
+  adequacy_fluency_diagonal=True family, replacing A/B when present),
+  'T' or 'J': (n_alpha,) allmqm_orientation or joint_orientation per alpha
+  (whichever donor_alpha_dial_grid built, depending on synthesis)} for one
+  donor, from mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid's
+  output -- one orientation_score per column (alpha), read off that
+  column's dial-ordered SPA values. adjacent_only passed straight through
+  to orientation_score."""
   out = {}
-  for label in ('A', 'B', 'T', 'J'):
+  for label in ('A', 'B', 'AF', 'T', 'J'):
     if label not in grids:
       continue
     g = grids[label]  # (n_dial, n_alpha), rows already in ascending dial order

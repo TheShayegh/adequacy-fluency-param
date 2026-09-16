@@ -7,6 +7,10 @@ __pycache__/
 output/
 external/mt-metrics-eval-data/
 
+# Local regression baseline (verified-good pipeline outputs kept for
+# comparison against future refactors) -- see golden_reference/MANIFEST.md.
+golden_reference/
+
 # Legacy local exploratory-research dump, predates this repo's cleanup;
 # kept on disk but never tracked.
 artifacts/

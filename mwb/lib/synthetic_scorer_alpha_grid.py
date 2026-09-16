@@ -28,7 +28,10 @@ from mwb.lib.metametrics import (
 )
 from mwb.lib.metric_scores import load_human_seg_scores, load_metric_seg_scores
 from mwb.lib.spa_plane import DEFAULT_NUM_PERMUTATIONS, DEFAULT_SEED, positional_af_matrices
-from mwb.lib.synthetic_scorers import DIAL_GRID, SYNTHESIS_GENERATORS, donor_family_joint
+from mwb.lib.synthetic_scorers import (
+    DIAGONAL_ADDITIVE_MEAN_DIAL_GRID, DIAL_GRID, SYNTHESIS_GENERATORS,
+    donor_family_additive_mean_diagonal, donor_family_joint,
+)
 from mwb.mqm_scoring import load_system_scores
 
 # Same floor mwb.lib.consistency/mwb.lib.spa_plane/mwb.lib.synthetic_scorers use before
@@ -76,9 +79,11 @@ def donor_alpha_dial_grid(
     dataset: str, donor_name: str, systems: list[str], w_by_alpha: dict[float, np.ndarray],
     root: str = '.', dial_grid=DIAL_GRID, metametric: str = 'spa', synthesis: str = 'offset',
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
+    adequacy_fluency_diagonal: bool = False, diagonal_dial_grid=None,
 ) -> dict[str, np.ndarray] | None:
   """{'A': (n_dial, n_alpha) weighted meta-metric grid, 'B': same for the
-  fluency family, 'J' or 'T': same for the third family (see below),
+  fluency family (or, with adequacy_fluency_diagonal=True, 'AF' replaces
+  both -- see below), 'J' or 'T': same for the third family (see below),
   'dials': the dial_grid as an array, 'alphas': sorted(w_by_alpha) as an
   array} for one donor. None if this donor lacks
   the segment coverage mwb.lib.synthetic_scorers.all_synthetic_family_points
@@ -161,7 +166,19 @@ def donor_alpha_dial_grid(
   alphas = sorted(w_by_alpha)
   out: dict[str, np.ndarray] = {}
 
-  built = {'A': build_family(donor_seg, a_pos, dial_grid), 'B': build_family(donor_seg, b_pos, dial_grid)}
+  if adequacy_fluency_diagonal:
+    # The paper's actual "Adequacy-fluency family" (Sec. "Scorer
+    # Augmentation"): ONE dial pushing toward more-adequate-AND-less-
+    # fluent simultaneously, not two separately-dialed single-aspect
+    # families. Its own dial grid (DIAGONAL_ADDITIVE_MEAN_DIAL_GRID,
+    # [-0.5, 0.5] by 0.02, matching the paper's dial-grid paragraph in
+    # Sec. "Evaluation Setup") is unrelated to `dial_grid` (which stays
+    # in effect for T/J below) -- pass diagonal_dial_grid explicitly to
+    # override it.
+    built = {'AF': donor_family_additive_mean_diagonal(
+        donor_seg, a_pos, b_pos, diagonal_dial_grid or DIAGONAL_ADDITIVE_MEAN_DIAL_GRID)}
+  else:
+    built = {'A': build_family(donor_seg, a_pos, dial_grid), 'B': build_family(donor_seg, b_pos, dial_grid)}
   if synthesis == 'offset':
     built['J'] = donor_family_joint(donor_seg, a_pos, b_pos, dial_grid)
   else:
@@ -170,8 +187,14 @@ def donor_alpha_dial_grid(
   if metametric == 'spa':
     p_human = pairwise_p_values(human_seg, num_permutations, seed)
     for label, family in built.items():
-      grid = np.full((len(dial_grid), len(alphas)), np.nan)
-      for di, dial in enumerate(dial_grid):
+      # Each family's OWN dial keys, not the shared `dial_grid` parameter:
+      # AF (adequacy_fluency_diagonal=True) is built on its own
+      # DIAGONAL_ADDITIVE_MEAN_DIAL_GRID (a different length/values than
+      # A/B/T/J's dial_grid), so indexing `family[dial]` with `dial_grid`'s
+      # values would KeyError for it.
+      family_dials = list(family)
+      grid = np.full((len(family_dials), len(alphas)), np.nan)
+      for di, dial in enumerate(family_dials):
         p_metric = pairwise_p_values(family[dial], num_permutations, seed)
         for ai, a in enumerate(alphas):
           grid[di, ai] = soft_pairwise_accuracy_from_pvalues(p_human, p_metric, w_by_alpha[a])
@@ -180,8 +203,9 @@ def donor_alpha_dial_grid(
     t = load_system_scores(dataset, root=root).loc[systems, 't'].values
     weighted_fn = WEIGHTED_METAMETRICS[metametric]
     for label, family in built.items():
-      grid = np.full((len(dial_grid), len(alphas)), np.nan)
-      for di, dial in enumerate(dial_grid):
+      family_dials = list(family)  # see the spa branch above for why not `dial_grid`
+      grid = np.full((len(family_dials), len(alphas)), np.nan)
+      for di, dial in enumerate(family_dials):
         u_k = family[dial].mean(axis=1)  # u_k(A) = mean_i y_A(k,i)
         for ai, a in enumerate(alphas):
           x = MetaEvalInput(human_sys=t, metric_sys=u_k)

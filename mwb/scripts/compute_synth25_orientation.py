@@ -27,22 +27,23 @@ Usage: python -m mwb.scripts.compute_synth25_orientation [--dataset ende24]
            [--metametric spa|pa] [--synthesis offset|additive|additive_mean]
            [--dial-preset linear|geometric] [--all-pools] [--tag TAG]
 
---J: switch to the J (Joint) family instead of A/B/T -- always offset's own
-donor_family_joint. --synthesis is ignored in this mode (J's construction
-is fixed, not a synthesis choice). --dial-preset picks which dial grid J
-itself uses: default (not passed, or anything other than 'symmetric')
-keeps the historical mwb.lib.synthetic_scorer_orientation.NEG_J_DIAL_GRID
-([0, -2] by -0.1) -- the synth25-baseline counterpart of
+--J: switch to the J (Joint) family instead of AF/T (or A/B/T) -- always
+offset's own donor_family_joint. --synthesis is ignored in this mode (J's
+construction is fixed, not a synthesis choice). --dial-preset picks which
+dial grid J itself uses: default (not passed, or anything other than
+'symmetric') keeps the historical mwb.lib.synthetic_scorer_orientation.
+NEG_J_DIAL_GRID ([0, -2] by -0.1) -- the synth25-baseline counterpart of
 compute_scorer_orientation_vs_alpha.py's --green-family Jneg, paired with
 some OTHER synthesis's A/B (e.g. additive_mean's) instead of that
 synthesis's own T. --dial-preset symmetric instead uses mwb.lib.
 synthetic_scorers.ABTJ_J_DIAL_GRID -- the counterpart of --green-family
-ABTJ (whose A/B/T side uses the DIFFERENT mwb.lib.synthetic_scorers.
-ABT_DIAL_GRID, not this one -- pass --dial-preset symmetric to BOTH this
-script's plain --synthesis run for A/B/T and its --J run; each resolves to
-its own matching grid, both labeled 'symmetric' for tag purposes). Only
---all-pools is supported for --J (the single-Row-7-value mode
-plot_scorer_orientation_vs_alpha.py never reads is skipped).
+DiagTJ (whose AF/T side uses the DIFFERENT mwb.lib.synthetic_scorers.
+DIAGONAL_ADDITIVE_MEAN_DIAL_GRID/ABT_DIAL_GRID, not this one -- pass
+--dial-preset symmetric to BOTH this script's plain --synthesis run for
+AF/T and its --J run; each resolves to its own matching grid, both labeled
+'symmetric' for tag purposes). Only --all-pools is supported for --J (the
+single-Row-7-value mode plot_scorer_orientation_vs_alpha.py never reads is
+skipped).
 """
 
 import argparse
@@ -78,12 +79,14 @@ if __name__ == '__main__':
                        help="'linear': DIAL_GRID, 0/0.1/.../1. 'geometric': GEOM_DIAL_GRID, {2^-i} packed "
                             "toward dial=0. 'extended': mwb.lib.synthetic_scorers.EXTENDED_ADDITIVE_MEAN_DIAL_GRID "
                             "(additive_mean only, paired with donor_family_additive_mean's standardized=True "
-                            "default). 'symmetric' (default, the committed setup): mwb.lib.synthetic_scorers."
-                            "ABT_DIAL_GRID for A/B/T, or ABTJ_J_DIAL_GRID under --J (paired with "
-                            "--green-family ABTJ) -- matching compute_scorer_orientation_vs_alpha.py's own "
-                            "default so the alpha-curve cache and this cache use the same dial grid. Under "
-                            "--J, only 'symmetric' has any effect (switches J from NEG_J_DIAL_GRID to "
-                            'ABTJ_J_DIAL_GRID) -- see module docstring.')
+                            "default). 'symmetric' (default, the paper's committed setup): builds AF (the "
+                            "single-dial Adequacy-fluency family, mwb.lib.synthetic_scorers.DIAGONAL_ADDITIVE_"
+                            "MEAN_DIAL_GRID) instead of separate A/B, plus T on mwb.lib.synthetic_scorers."
+                            "ABT_DIAL_GRID, or ABTJ_J_DIAL_GRID under --J (paired with --green-family DiagTJ) -- "
+                            "matching compute_scorer_orientation_vs_alpha.py's own default so the alpha-curve "
+                            "cache and this cache use the same families/grids. Under --J, only 'symmetric' has "
+                            "any effect (switches J from NEG_J_DIAL_GRID to ABTJ_J_DIAL_GRID) -- see module "
+                            'docstring.')
   parser.add_argument('--all-pools', action=argparse.BooleanOptionalAction, default=True,
                        help='ALSO compute and cache the other 5 POOL_BLOCKS pools plus each pool\'s own '
                             'alpha_0 (see module docstring) -- roughly 6x the runtime of the single Row-7 '
@@ -114,6 +117,10 @@ if __name__ == '__main__':
   # unused A/B/T dial_grid) -- see module docstring.
   j_dial_preset = 'symmetric' if (args.J and args.dial_preset == 'symmetric') else 'neg'
   j_dial_grid = ABTJ_J_DIAL_GRID if j_dial_preset == 'symmetric' else NEG_J_DIAL_GRID
+  # 'symmetric' is the paper's committed setup (paired with --green-family
+  # DiagTJ over in compute_scorer_orientation_vs_alpha.py): AF (the
+  # single-dial Adequacy-fluency family) replaces the separate A/B pair.
+  adequacy_fluency_diagonal = args.dial_preset == 'symmetric'
 
   systems = real_systems(base, root=ROOT, excl_missing_seg_granular_mqm=True)
   if not systems:
@@ -148,11 +155,16 @@ if __name__ == '__main__':
     pool_orientation = dataset_synth25_orientation_all_pools(
         base, systems, root=ROOT, metametric_name=metametric_name, dial_grid=dial_grid,
         synthesis=args.synthesis, progress=True, workers=args.workers,
+        adequacy_fluency_diagonal=adequacy_fluency_diagonal,
     )
     for pool_name in POOL_BLOCKS:
       o = pool_orientation[pool_name]
-      print(f'{base}: pool {pool_name} adequacy={o["A"]:.4f} fluency={o["B"]:.4f} allmqm={o["T"]:.4f}',
-            file=sys.stderr)
+      if adequacy_fluency_diagonal:
+        print(f'{base}: pool {pool_name} adequacy_over_fluency={o["AF"]:.4f} allmqm={o["T"]:.4f}',
+              file=sys.stderr)
+      else:
+        print(f'{base}: pool {pool_name} adequacy={o["A"]:.4f} fluency={o["B"]:.4f} allmqm={o["T"]:.4f}',
+              file=sys.stderr)
 
     tag = args.tag or pools_tag(base, metametric_name, args.synthesis, args.dial_preset)
     out_path = os.path.join(DATA_DIR, f'synth25_orientation_{tag}.npz')
@@ -165,9 +177,14 @@ if __name__ == '__main__':
     orientation = dataset_synth25_orientation(
         base, systems, root=ROOT, metametric_name=metametric_name, dial_grid=dial_grid,
         synthesis=args.synthesis, progress=True,
+        adequacy_fluency_diagonal=adequacy_fluency_diagonal,
     )
-    print(f'{base}: adequacy={orientation["A"]:.4f} fluency={orientation["B"]:.4f} '
-          f'allmqm={orientation["T"]:.4f}', file=sys.stderr)
+    if adequacy_fluency_diagonal:
+      print(f'{base}: adequacy_over_fluency={orientation["AF"]:.4f} allmqm={orientation["T"]:.4f}',
+            file=sys.stderr)
+    else:
+      print(f'{base}: adequacy={orientation["A"]:.4f} fluency={orientation["B"]:.4f} '
+            f'allmqm={orientation["T"]:.4f}', file=sys.stderr)
 
     tag = args.tag or orientation_tag(base, metametric_name, args.synthesis, args.dial_preset)
     out_path = os.path.join(DATA_DIR, f'synth25_orientation_{tag}.npz')

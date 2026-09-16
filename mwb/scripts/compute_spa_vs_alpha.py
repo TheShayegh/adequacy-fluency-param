@@ -1,7 +1,9 @@
 """Computes SPA(scorer; alpha) vs. target balance alpha, for every real
 scorer in a dataset whose name contains one of --substrings (case-
-insensitive) -- e.g. the COMET-family and MetricX-family automatic MT
-metrics -- and caches the result to disk (output/data/spa_vs_alpha_<tag>_
+insensitive) -- by default the MetricX and xCOMET variants compared in the
+paper's Figure 5 (NOT every COMET-family scorer: 'comet' alone would also
+match CometKiwi, Calibri-COMET22, cometoid22-*, etc., which the paper does
+not include here) -- and caches the result to disk (output/data/spa_vs_alpha_<tag>_
 n<n_alpha>.npz) -- the expensive step (mwb.lib.reweight_exact.solve_w_exact per
 alpha, a permutation test per scorer, mwb.lib.spa_alpha_sweep) separated from
 plotting (plot_spa_vs_alpha.py, plot_spa_vs_alpha_combo.py) so
@@ -33,7 +35,7 @@ same sweep, for a side-by-side comparison via plot_spa_vs_alpha_combo.py)
 would otherwise silently overwrite each other's cache under a shared --tag.
 
 Usage: python -m mwb.scripts.compute_spa_vs_alpha
-           [--dataset ende24] [--substrings comet,metricx] [--min-ess -1] [--n-alpha 10] [--tag TAG]
+           [--dataset ende24] [--substrings metricx,xcomet] [--min-ess -1] [--n-alpha 10] [--tag TAG]
 """
 
 import argparse
@@ -56,7 +58,7 @@ DATA_DIR = os.path.join(ROOT, 'output', 'data')
 if __name__ == '__main__':
   p = argparse.ArgumentParser()
   p.add_argument('--dataset', type=str, default='ende24')
-  p.add_argument('--substrings', type=str, default='comet,metricx',
+  p.add_argument('--substrings', type=str, default='metricx,xcomet',
                   help='comma-separated, case-insensitive substrings a scorer name must contain '
                        'to be included')
   p.add_argument('--min-ess', type=float, default=-1,

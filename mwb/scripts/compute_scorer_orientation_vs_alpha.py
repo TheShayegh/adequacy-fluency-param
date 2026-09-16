@@ -9,27 +9,36 @@ never requires rerunning it. This produces the paper's Figure 3 (and its
 appendix grid): the main-results adequacy-over-fluency-preference,
 MQM-adherence, and explainability-by-MQM curves.
 
-For every donor s_0, builds its A-family and B-family over dial in [0, 1]
-by 0.1 (11 scorers each, the full linear sweep by default -- see
---synthesis for the two additive alternatives, mwb.lib.synthetic_scorers), then
-at every alpha, scores every same-family dial pair (C(11,2)=55 of them)
-with the weighted meta-metric (--metametric spa|pa|pearson;
-mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid) and reduces to
-orientation_score -- the fraction of pairs where the metametric prefers
-the more extreme (further-from-the-real-donor) dial. Also stores
-ESS(w*(alpha)) alongside, for plotting next to the orientation curves.
+In the paper's committed setup (--green-family DiagTJ, the default), every
+donor s_0 gets exactly THREE families: AF (the single-dial Adequacy-fluency
+preference family, mwb.lib.synthetic_scorers.donor_family_additive_mean_diagonal,
+on its own DIAGONAL_ADDITIVE_MEAN_DIAL_GRID), T (MQM-adherence, dialed on
+AllMQM), and J (Explainability-by-MQM, the Joint family) -- matching the
+paper's Figure 3 exactly (three curves: "Adequacy over fluency", "MQM
+adherence", "Explainability by MQM"). At every alpha, scores every
+same-family dial pair with the weighted meta-metric (--metametric
+spa|pa|pearson; mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid)
+and reduces to orientation_score -- the fraction of pairs where the
+metametric prefers the more extreme (further-from-the-real-donor) dial.
+Also stores ESS(w*(alpha)) alongside, for plotting next to the orientation
+curves. Other --green-family modes (see below) instead build the separate
+single-aspect A/B families (the paper's footnoted, excluded construction --
+see mwb.lib.synthetic_scorers.donor_family_adequacy_adherence).
 
 Usage: python -m mwb.scripts.compute_scorer_orientation_vs_alpha [--dataset ende21]
            [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa|pearson]
            [--synthesis offset|additive|additive_mean] [--dial-preset linear|geometric]
-           [--aspect-donors] [--green-family default|Jneg] [--dial-step 0.005] [--dial-n 201] [--tag TAG]
+           [--aspect-donors] [--green-family default|Jneg|DiagTJ] [--dial-step 0.005] [--dial-n 201] [--tag TAG]
 
---dial-step/--dial-n: resolution of the --green-family ABTJ grids (mwb.lib.
-synthetic_scorers.make_abt_dial_grid/make_abtj_j_dial_grid) -- step*k for k
-in range(n) sweeps a fixed exponent range, so raising n while lowering step
-by the same factor (e.g. step=0.001, n=1001 instead of the default
-step=0.005, n=201) only adds resolution within that same range, useful for
-a higher-density poster-style render. Ignored unless --green-family ABTJ.
+--dial-step/--dial-n: resolution of the --green-family DiagTJ T/J grids
+(mwb.lib.synthetic_scorers.make_abt_dial_grid/make_abtj_j_dial_grid) --
+step*k for k in range(n) sweeps a fixed exponent range, so raising n while
+lowering step by the same factor (e.g. step=0.001, n=1001 instead of the
+default step=0.005, n=201) only adds resolution within that same range,
+useful for a higher-density poster-style render. AF's own dial grid
+(DIAGONAL_ADDITIVE_MEAN_DIAL_GRID) is unaffected -- it matches the paper's
+Sec. "Evaluation Setup" dial-grid paragraph exactly and isn't a tunable
+here. Ignored unless --green-family DiagTJ.
 
 --green-family Jneg (only meaningful with --synthesis additive/additive_mean,
 whose own third family is T): overrides the cached third family with J
@@ -44,17 +53,19 @@ instead of additive_mean's own T. This extra J call always uses
 NEG_J_DIAL_GRID regardless of --dial-preset (matches offset's own
 EXTENDED_OFFSET_DIAL_GRID convention of ignoring --dial-preset entirely).
 
---green-family ABTJ (--synthesis must be additive/additive_mean, the
-committed/default setup): caches ALL FOUR families at once -- A, B, T from
-the main --synthesis run (T is that run's own third family, kept this time
-instead of being discarded), PLUS J from an EXTRA
+--green-family DiagTJ (--synthesis must be additive/additive_mean, the
+paper's committed/default setup): caches THREE families at once -- AF (the
+single-dial Adequacy-fluency family, replacing the separate A/B pair) and
+T from the main --synthesis run (T is that run's own third family, kept
+this time instead of being discarded), PLUS J from an EXTRA
 donor_alpha_dial_grid(..., synthesis='offset') call, only J kept from it.
-Both directions are forced regardless of --dial-preset, but onto DIFFERENT
-grids: the main run uses make_abt_dial_grid(--dial-step, --dial-n), the
+T and J are forced regardless of --dial-preset, but onto DIFFERENT grids:
+the main run uses make_abt_dial_grid(--dial-step, --dial-n) for T, the
 extra J call uses make_abtj_j_dial_grid(--dial-step, --dial-n) -- see
 those functions' own docstring for why ascending raw dial value is
 ascending "goodness" for both (so, unlike NEG_J_DIAL_GRID, neither needs
-reordering).
+reordering). AF always uses its own DIAGONAL_ADDITIVE_MEAN_DIAL_GRID,
+independent of --dial-step/--dial-n.
 """
 
 import argparse
@@ -94,11 +105,12 @@ def _compute_one_donor(job):
   mirrors the two SKIPPED cases the sequential loop prints inline."""
   base, donor, systems, w_by_alpha, dial_grid, metametric, synthesis, green_family, j_dial_grid = job
   grids = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=dial_grid,
-                                 metametric=metametric, synthesis=synthesis)
+                                 metametric=metametric, synthesis=synthesis,
+                                 adequacy_fluency_diagonal=(green_family == 'DiagTJ'))
   if grids is None:
     return donor, None, 'insufficient segment coverage'
   orient = donor_orientation_by_alpha(grids)
-  if green_family in ('Jneg', 'ABTJ'):
+  if green_family in ('Jneg', 'DiagTJ'):
     grids_j = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=j_dial_grid,
                                      metametric=metametric, synthesis='offset')
     if grids_j is None:
@@ -119,7 +131,7 @@ if __name__ == '__main__':
                        help='use the union of every pairwise alpha_ij of D with a plain uniform '
                             '[alpha_min, alpha_max] sweep at --step (mwb.lib.alpha.union_alpha_grid) instead '
                             'of --full-range/the alpha_0(D)-centered window. Default: True (the committed '
-                            'setup, matching --synthesis additive_mean/--green-family ABTJ below).')
+                            'setup, matching --synthesis additive_mean/--green-family DiagTJ below).')
   parser.add_argument('--beta-grid', action=argparse.BooleanOptionalAction, default=False,
                        help='like --union-grid (the alpha_ij union stays), but the uniform-sweep half is '
                             'evenly spaced in BETA space instead of alpha space (mwb.lib.alpha.'
@@ -149,11 +161,13 @@ if __name__ == '__main__':
                        help="compute only mwb.lib.synthetic_scorer_alpha_grid.ASPECT_DONORS ('AdequacyMQM', "
                             "'FluencyMQM', 'AllMQM' -- the gold aspect signals themselves faking to be a "
                             "donor scorer) instead of the real_scorers-screened candidate list")
-  parser.add_argument('--green-family', choices=['default', 'Jneg', 'ABTJ'], default='ABTJ',
+  parser.add_argument('--green-family', choices=['default', 'Jneg', 'DiagTJ'], default='DiagTJ',
                        help="'default': third family is whatever --synthesis produces (T for additive/"
-                            "additive_mean, J for offset). 'Jneg': override the third family with offset's "
-                            "J built on NEG_J_DIAL_GRID ([0, -2] by -0.1) instead. 'ABTJ' (default, the "
-                            'committed setup): cache A, B, T, and J all at once -- A/B/T on '
+                            "additive_mean, J for offset), A/B are the separate single-aspect families. "
+                            "'Jneg': override the third family with offset's J built on NEG_J_DIAL_GRID "
+                            "([0, -2] by -0.1) instead, A/B still separate. 'DiagTJ' (default, the paper's "
+                            "committed setup): cache the single-dial Adequacy-fluency family (AF, replacing "
+                            "A/B) together with T and J -- AF on DIAGONAL_ADDITIVE_MEAN_DIAL_GRID, T on "
                             'make_abt_dial_grid(--dial-step, --dial-n), J on '
                             'make_abtj_j_dial_grid(--dial-step, --dial-n) -- see module docstring for both.')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
@@ -167,10 +181,10 @@ if __name__ == '__main__':
                             '(sequential, the original behavior -- opt-in only, since ProcessPoolExecutor '
                             'changes stderr interleaving/ordering).')
   parser.add_argument('--dial-step', type=float, default=0.005,
-                       help='resolution of the --green-family ABTJ grids -- see module docstring. Default: '
-                            '0.005 (201 points over the committed [0,1] exponent range).')
+                       help='resolution of the --green-family DiagTJ T/J grids -- see module docstring. '
+                            'Default: 0.005 (201 points over the committed [0,1] exponent range).')
   parser.add_argument('--dial-n', type=int, default=201,
-                       help='number of points in the --green-family ABTJ grids -- see --dial-step.')
+                       help='number of points in the --green-family DiagTJ T/J grids -- see --dial-step.')
   args = parser.parse_args()
   base = args.dataset
   if args.dial_preset is None:
@@ -178,7 +192,7 @@ if __name__ == '__main__':
   dial_grid = {
       'linear': DIAL_GRID, 'geometric': GEOM_DIAL_GRID, 'extended': EXTENDED_ADDITIVE_MEAN_DIAL_GRID,
   }[args.dial_preset]
-  if args.green_family == 'ABTJ':
+  if args.green_family == 'DiagTJ':
     dial_grid = make_abt_dial_grid(args.dial_step, args.dial_n)
     args.dial_preset = 'symmetric'  # so the auto tag/cache metadata reflect the actual grid, not --dial-preset
 
@@ -223,12 +237,12 @@ if __name__ == '__main__':
   n = len(candidates)
   t0 = time.time()
   orient_by_donor = {}
-  j_dial_grid = (make_abtj_j_dial_grid(args.dial_step, args.dial_n) if args.green_family == 'ABTJ' else NEG_J_DIAL_GRID) \
-      if args.green_family in ('Jneg', 'ABTJ') else None
+  j_dial_grid = (make_abtj_j_dial_grid(args.dial_step, args.dial_n) if args.green_family == 'DiagTJ' else NEG_J_DIAL_GRID) \
+      if args.green_family in ('Jneg', 'DiagTJ') else None
   if args.workers > 1:
     # Parallel path: donors are independent given the already-solved
     # w_by_alpha, so _compute_one_donor's two donor_alpha_dial_grid calls
-    # (main + the ABTJ/Jneg offset-J extra) run one donor per worker
+    # (main + the DiagTJ/Jneg offset-J extra) run one donor per worker
     # process. Only 10s-100s of donors here (real_scorers-screened), so --
     # unlike a bulk many-thousands-of-jobs pipeline that needs bounded-
     # in-flight submission -- submitting every job at once is safe.
@@ -248,12 +262,13 @@ if __name__ == '__main__':
   else:
     for i, donor in enumerate(candidates, 1):
       grids = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=dial_grid,
-                                     metametric=args.metametric, synthesis=args.synthesis)
+                                     metametric=args.metametric, synthesis=args.synthesis,
+                                     adequacy_fluency_diagonal=(args.green_family == 'DiagTJ'))
       if grids is None:
         print(f'[{i}/{n}] SKIPPED {donor} (insufficient segment coverage)', file=sys.stderr)
         continue
       orient = donor_orientation_by_alpha(grids)
-      if args.green_family in ('Jneg', 'ABTJ'):
+      if args.green_family in ('Jneg', 'DiagTJ'):
         grids_j = donor_alpha_dial_grid(base, donor, systems, w_by_alpha, root=ROOT, dial_grid=j_dial_grid,
                                          metametric=args.metametric, synthesis='offset')
         if grids_j is None:
@@ -268,13 +283,13 @@ if __name__ == '__main__':
   print(f'{base}: {len(orient_by_donor)}/{n} donors used', file=sys.stderr)
 
   donors = sorted(orient_by_donor)
-  A = np.array([orient_by_donor[d]['A'] for d in donors])
-  B = np.array([orient_by_donor[d]['B'] for d in donors])
-  if args.green_family == 'ABTJ':
-    # Both T (the main --synthesis run's own third family) and J (the
-    # extra offset call) are kept this time, not just one -- see module
-    # docstring.
-    extra = {'T': np.array([orient_by_donor[d]['T'] for d in donors]),
+  if args.green_family == 'DiagTJ':
+    # The paper's actual committed setup: AF (the single-dial Adequacy-
+    # fluency preference family) replaces the separate A/B pair. Both T
+    # (the main --synthesis run's own third family) and J (the extra
+    # offset call) are kept -- see module docstring.
+    extra = {'AF': np.array([orient_by_donor[d]['AF'] for d in donors]),
+             'T': np.array([orient_by_donor[d]['T'] for d in donors]),
              'J': np.array([orient_by_donor[d]['J'] for d in donors])}
   else:
     # 'J' (Joint) for synthesis='offset' OR --green-family Jneg (which
@@ -282,7 +297,9 @@ if __name__ == '__main__':
     # 'T' (AllMQM) otherwise (additive/additive_mean's own third family) --
     # matches whichever third family ended up in orient_by_donor, never both.
     third_label = 'J' if (args.synthesis == 'offset' or args.green_family == 'Jneg') else 'T'
-    extra = {third_label: np.array([orient_by_donor[d][third_label] for d in donors])}
+    extra = {'A': np.array([orient_by_donor[d]['A'] for d in donors]),
+             'B': np.array([orient_by_donor[d]['B'] for d in donors]),
+             third_label: np.array([orient_by_donor[d][third_label] for d in donors])}
 
   if args.tag:
     tag = args.tag
@@ -293,13 +310,13 @@ if __name__ == '__main__':
                            args.dial_preset)
   if args.aspect_donors and not args.tag:
     tag += '_aspectdonors'
-  if args.green_family in ('Jneg', 'ABTJ') and not args.tag:
+  if args.green_family in ('Jneg', 'DiagTJ') and not args.tag:
     tag += f'_{args.green_family}'
   os.makedirs(DATA_DIR, exist_ok=True)
   out_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
   save_orientation_data(
       out_path, dataset=base, alphas=alphas, center_alpha=center_alpha, K=K, donors=donors,
-      A=A, B=B, ess=ess_by_alpha, dial_grid=dial_grid, metametric=args.metametric, synthesis=args.synthesis,
+      ess=ess_by_alpha, dial_grid=dial_grid, metametric=args.metametric, synthesis=args.synthesis,
       dial_preset=args.dial_preset, **extra,
   )
   print(f'Wrote {out_path}', file=sys.stderr)
