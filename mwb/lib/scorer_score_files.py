@@ -1,4 +1,4 @@
-"""Loading automatic-metric scores (external/mt-metrics-eval-data/
+"""Loading automatic-scorer scores (external/mt-metrics-eval-data/
 mt-metrics-eval-v2/<year>/metric-scores/<pair>/*.{sys,seg}.score) aligned to
 our canonical MQM system set, for the meta-evaluation / consistency
 experiments.
@@ -20,12 +20,12 @@ import numpy as np
 import pandas as pd
 
 from mwb.lib.dataset_dirs import DATASET_DIRS
-from mwb.lib.metric_names import split_variant
+from mwb.lib.scorer_names import split_variant
 from mwb.lib.systems import is_reference_or_human, join_key
 
 _ROOT_DATA = 'external/mt-metrics-eval-data/mt-metrics-eval-v2'
 
-# Preference order when a dataset scores one metric family against multiple
+# Preference order when a dataset scores one scorer family against multiple
 # references (e.g. ende24's BLEU-refA and BLEU-refB): pick the first
 # variant present. "refA" is WMT's primary reference from 2021 on; "ref" is
 # wmt20's primary reference (Human-A). Remaining/QE-only variants fall back
@@ -33,22 +33,22 @@ _ROOT_DATA = 'external/mt-metrics-eval-data/mt-metrics-eval-v2'
 _VARIANT_PRIORITY = ('refA', 'ref', 'all', 'src')
 
 
-def _metric_dir(dataset: str, root: str) -> str:
+def _scorer_dir(dataset: str, root: str) -> str:
   year, pair = DATASET_DIRS[dataset]
   return os.path.join(root, _ROOT_DATA, year, 'metric-scores', pair)
 
 
-def discover_metrics(dataset: str, root: str = '.') -> dict[str, str]:
-  """Stripped metric name -> chosen '<metric>-<variant>' file stem, for
-  every metric with a .sys.score file in this dataset (mwb.lib.metric_names.
+def discover_scorers(dataset: str, root: str = '.') -> dict[str, str]:
+  """Stripped scorer name -> chosen '<scorer>-<variant>' file stem, for
+  every scorer with a .sys.score file in this dataset (mwb.lib.scorer_names.
   split_variant defines "stripped"; see module docstring there for why
   version-tagged families are deliberately left unmerged)."""
-  d = _metric_dir(dataset, root)
+  d = _scorer_dir(dataset, root)
   by_name = defaultdict(list)
-  for f in os.listdir(d):
-    if not f.endswith('.sys.score'):
+  for fh in os.listdir(d):
+    if not fh.endswith('.sys.score'):
       continue
-    stem = f[: -len('.sys.score')]
+    stem = fh[: -len('.sys.score')]
     name, variant = split_variant(stem)
     by_name[name].append((variant, stem))
 
@@ -65,8 +65,8 @@ def _load_score_file(path: str) -> dict[str, list[float]]:
   are the one exception -- space-delimited, not tab -- so fall back to
   splitting on the last space when no tab is present."""
   scores = defaultdict(list)
-  with open(path) as f:
-    for line in f:
+  with open(path) as fh:
+    for line in fh:
       line = line.rstrip('\n')
       if not line.strip():
         continue
@@ -82,16 +82,16 @@ def _canonical_map(mqm_systems) -> dict[str, str]:
   return {join_key(s): s for s in mqm_systems if not is_reference_or_human(s)}
 
 
-def load_metric_sys_scores(dataset: str, mqm_systems, root: str = '.') -> dict[str, pd.Series]:
-  """Stripped metric name -> system-level Series indexed by the canonical
-  MQM system names in `mqm_systems` (real systems only). A metric is
+def load_scorer_sys_scores(dataset: str, mqm_systems, root: str = '.') -> dict[str, pd.Series]:
+  """Stripped scorer name -> system-level Series indexed by the canonical
+  MQM system names in `mqm_systems` (real systems only). A scorer is
   included only if it covers every one of those systems with a numeric
   score -- partial coverage can't produce a fair scorer-ranking entry."""
   key_to_canonical = _canonical_map(mqm_systems)
   wanted = set(key_to_canonical.values())
-  d = _metric_dir(dataset, root)
+  d = _scorer_dir(dataset, root)
   out = {}
-  for name, stem in discover_metrics(dataset, root).items():
+  for name, stem in discover_scorers(dataset, root).items():
     raw = _load_score_file(os.path.join(d, stem + '.sys.score'))
     vals = {}
     for raw_name, xs in raw.items():
@@ -131,15 +131,15 @@ def load_human_seg_scores(dataset: str, systems_order: list[str], root: str = '.
   return _seg_matrix(raw, key_to_canonical, systems_order)
 
 
-def load_metric_seg_scores(dataset: str, metric_name: str, systems_order: list[str],
+def load_scorer_seg_scores(dataset: str, scorer_name: str, systems_order: list[str],
                             root: str = '.') -> np.ndarray | None:
   """(K, n_positions) segment-score matrix for one (already-discovered)
-  metric, row order == systems_order, or None if its .seg.score file is
+  scorer, row order == systems_order, or None if its .seg.score file is
   missing or doesn't cover every requested system."""
-  stem = discover_metrics(dataset, root).get(metric_name)
+  stem = discover_scorers(dataset, root).get(scorer_name)
   if stem is None:
     return None
-  path = os.path.join(_metric_dir(dataset, root), stem + '.seg.score')
+  path = os.path.join(_scorer_dir(dataset, root), stem + '.seg.score')
   if not os.path.exists(path):
     return None
   raw = _load_score_file(path)
@@ -147,8 +147,8 @@ def load_metric_seg_scores(dataset: str, metric_name: str, systems_order: list[s
   return _seg_matrix(raw, key_to_canonical, systems_order)
 
 
-def jointly_valid_columns(human_seg: np.ndarray, metric_seg: np.ndarray) -> np.ndarray:
+def jointly_valid_columns(human_seg: np.ndarray, scorer_seg: np.ndarray) -> np.ndarray:
   """Boolean mask over segment positions valid (non-NaN) for every system
   in both matrices -- SPA's permutation test needs a fully numeric matrix,
   and coverage can be ragged in either source independently."""
-  return ~(np.isnan(human_seg).any(axis=0) | np.isnan(metric_seg).any(axis=0))
+  return ~(np.isnan(human_seg).any(axis=0) | np.isnan(scorer_seg).any(axis=0))

@@ -3,27 +3,21 @@ Statistics", restricted to quantities the experiments actually use, emitted
 as LaTeX tables (Tables dataset-core, dataset-betaij, dataset-mqm,
 dataset-scorers).
 
-NAMING: the paper's beta is this codebase's `alpha` (mwb.lib.alpha) throughout --
-see mwb/lib/alpha.py. Columns are printed with the PAPER's names (beta_*),
-computed by mwb.lib.alpha's alpha_* functions. The codebase's own `beta`
-(mwb.lib.alpha.alpha_to_beta) is the paper's footnote reparameterization
-beta_std and does not appear here at all.
-
 Columns
 -------
 K          -- real systems, mwb.lib.consistency.real_systems (the project default
               wmt_official_outliers screen). Datasets this screen empties
               (ende20, zhen20, ende23) are skipped.
-n_scorers  -- the BASE SCORER (donor) pool the augmentation experiments
+n_scorers  -- the BASE SCORER (base scorer) pool the augmentation experiments
               actually average over: mwb.lib.consistency.real_scorers with
               require_seg_scores=True, deduplicate=True,
               exclude_degenerate=True, further filtered by
-              mwb.lib.synthetic_scorer_alpha_grid.donor_alpha_dial_grid's own
+              mwb.lib.synthetic_scorer_beta_grid.base_scorer_beta_dial_grid's own
               coverage gate (positional alignment must validate, human and
-              donor segment matrices must load at the pool's width, and at
+              base scorer segment matrices must load at the pool's width, and at
               least _MIN_SPA_SEGMENTS=10 segments must be jointly non-NaN).
-              That gate is replicated here directly -- see donor_pool() --
-              so this count is what compute_scorer_orientation_vs_alpha.py
+              That gate is replicated here directly -- see base_scorer_pool() --
+              so this count is what compute_scorer_preference_vs_beta.py
               would actually iterate over, not merely what real_scorers
               offers it.
 n_segments -- segments behind the system-level scores (post modal-coverage
@@ -35,8 +29,8 @@ beta_min/beta_max -- reachable range (Theorem "Reachable range"), i.e.
 beta_range        -- beta_max - beta_min.
 
 n_pairs, mean/median/std/iqr_beta_ij
-           -- the C(K,2) pairwise-balance distribution (mwb.lib.alpha.
-              pairwise_alphas). Theorem "Admissible supports" makes any
+           -- the C(K,2) pairwise-balance distribution (mwb.lib.beta.
+              pairwise_betas). Theorem "Admissible supports" makes any
               feasible target a convex combination of these, so their
               concentration is directly the reweighting's room to
               manoeuvre.
@@ -69,9 +63,9 @@ import sys
 import numpy as np
 import pandas as pd
 
-from mwb.lib.alpha import alpha_0, alpha_min_max, pairwise_alphas, variances
+from mwb.lib.beta import beta_0, beta_min_max, pairwise_betas, variances
 from mwb.lib.consistency import real_scorers, real_systems
-from mwb.lib.metric_scores import load_human_seg_scores, load_metric_seg_scores
+from mwb.lib.scorer_score_files import load_human_seg_scores, load_scorer_seg_scores
 from mwb.lib.spa_plane import positional_af_matrices
 from mwb.lib.synthetic_scorers import _MIN_SPA_SEGMENTS
 from mwb.mqm_scoring import SETS, load_system_scores
@@ -82,8 +76,8 @@ DATASETS = list(SETS.keys())
 
 # enru22 is excluded from the paper entirely. It has no base-scorer pool at
 # all (its segment-level positional alignment cannot be validated -- see
-# donor_pool()'s coverage gate below -- so donor_alpha_dial_grid rejects
-# EVERY donor), which already ruled it out of every augmentation
+# base_scorer_pool()'s coverage gate below -- so base_scorer_beta_dial_grid rejects
+# EVERY base scorer), which already ruled it out of every augmentation
 # experiment; it is now also dropped from the system-level-only
 # leave-one-out table, so no result in the paper covers it. Kept as a
 # named constant rather than silently omitted from ORDER so the reason
@@ -102,55 +96,55 @@ ORDER = ['ende24', 'enes24', 'jazh24', 'heen23', 'zhen23',
          'ende22', 'zhen22', 'ende21', 'zhen21', 'ted_ende', 'ted_zhen']
 
 
-def donor_pool(dataset: str, systems: list[str], root: str = '.') -> list[str]:
+def base_scorer_pool(dataset: str, systems: list[str], root: str = '.') -> list[str]:
   """The base scorers an augmentation experiment actually uses: real_scorers'
-  segment-level screen, then donor_alpha_dial_grid's own coverage gate
-  (mwb/lib/synthetic_scorer_alpha_grid.py) replicated exactly, minus the
+  segment-level screen, then base_scorer_beta_dial_grid's own coverage gate
+  (mwb/lib/synthetic_scorer_beta_grid.py) replicated exactly, minus the
   expensive dial/SPA work. Returns [] when the dataset's positional
-  alignment or human segment scores are unusable, i.e. when NO donor can be
+  alignment or human segment scores are unusable, i.e. when NO base scorer can be
   built at all."""
   candidates = real_scorers(dataset, root=root, systems=systems, require_seg_scores=True)
   pos = positional_af_matrices(dataset, systems, root=root)
   if pos is None:
     return []
-  a_pos, b_pos = pos
+  a_pos, f_pos = pos
   human_seg = load_human_seg_scores(dataset, systems, root=root)
   if human_seg is None or human_seg.shape[1] != a_pos.shape[1]:
     return []
 
-  bad = np.isnan(a_pos).any(axis=0) | np.isnan(b_pos).any(axis=0) | np.isnan(human_seg).any(axis=0)
-  donors = []
+  bad = np.isnan(a_pos).any(axis=0) | np.isnan(f_pos).any(axis=0) | np.isnan(human_seg).any(axis=0)
+  base_scorers = []
   for name in candidates:
-    seg = load_metric_seg_scores(dataset, name, systems, root=root)
+    seg = load_scorer_seg_scores(dataset, name, systems, root=root)
     if seg is None or seg.shape[1] != a_pos.shape[1]:
       continue
     if int((~(bad | np.isnan(seg).any(axis=0))).sum()) < _MIN_SPA_SEGMENTS:
       continue
-    donors.append(name)
-  return donors
+    base_scorers.append(name)
+  return base_scorers
 
 
 def dataset_stats_row(a: np.ndarray, f: np.ndarray) -> dict:
   """Every (a, f)-derived column, from the two system-level vectors alone --
   no I/O, so this is reusable per-subset (e.g. a leave-one-out pool)."""
   var_a, var_f = variances(a, f)
-  b0 = alpha_0(a, f)
-  bmin, bmax = alpha_min_max(a, f)
+  beta0 = beta_0(a, f)
+  beta_lo, beta_hi = beta_min_max(a, f)
 
   # Uniform-weight (population, 1/K) covariance -- same convention as
   # variances(), so var_a + var_f + 2*cov == var(a+f) exactly.
   cov_af = float(np.mean((a - a.mean()) * (f - f.mean())))
   rho = float(cov_af / np.sqrt(var_a * var_f)) if var_a > 0 and var_f > 0 else float('nan')
 
-  bijs = np.array([v for _, _, v in pairwise_alphas(a, f)])
-  q1, q3 = np.percentile(bijs, [25, 75])
+  beta_ijs = np.array([v for _, _, v in pairwise_betas(a, f)])
+  q1, q3 = np.percentile(beta_ijs, [25, 75])
 
   return {
       'K': len(a),
-      'beta_0': b0, 'beta_min': bmin, 'beta_max': bmax, 'beta_range': bmax - bmin,
-      'n_pairs': len(bijs),
-      'mean_beta_ij': float(bijs.mean()), 'median_beta_ij': float(np.median(bijs)),
-      'std_beta_ij': float(bijs.std()), 'iqr_beta_ij': float(q3 - q1),
+      'beta_0': beta0, 'beta_min': beta_lo, 'beta_max': beta_hi, 'beta_range': beta_hi - beta_lo,
+      'n_pairs': len(beta_ijs),
+      'mean_beta_ij': float(beta_ijs.mean()), 'median_beta_ij': float(np.median(beta_ijs)),
+      'std_beta_ij': float(beta_ijs.std()), 'iqr_beta_ij': float(q3 - q1),
       'mean_a': float(a.mean()), 'var_a': var_a,
       'mean_f': float(f.mean()), 'var_f': var_f,
       'rho_af': rho, 'cov_af': cov_af,
@@ -229,16 +223,16 @@ if __name__ == '__main__':
       continue
 
     sys_df = load_system_scores(name, root=ROOT).loc[systems]
-    a, f = sys_df['a'].values, sys_df['b'].values
-    donors = donor_pool(name, systems, root=ROOT)
-    scorer_lists[name] = donors
+    a, f = sys_df['a'].values, sys_df['f'].values
+    base_scorers = base_scorer_pool(name, systems, root=ROOT)
+    scorer_lists[name] = base_scorers
 
     rows.append({
         'dataset': name, **dataset_stats_row(a, f),
-        'n_scorers': len(donors),
+        'n_scorers': len(base_scorers),
         'n_segments': int(sys_df['n_segments'].iloc[0]),
     })
-    print(f'{name}: K={len(systems)} base scorers={len(donors)}', file=sys.stderr)
+    print(f'{name}: K={len(systems)} base scorers={len(base_scorers)}', file=sys.stderr)
 
   out = pd.DataFrame(rows).set_index('dataset')
 
@@ -330,11 +324,11 @@ full."""
 
   md_path = os.path.join(ROOT, 'output', 'dataset_scorers.md')
   with open(md_path, 'w') as fh:
-    fh.write('# Base scorers (augmentation donors) per dataset\n\n')
+    fh.write('# Base scorers (augmentation base_scorers) per dataset\n\n')
     fh.write(
         'The pool every scorer-augmentation experiment averages over: '
         '`mwb.lib.consistency.real_scorers(require_seg_scores=True)` after '
-        "`donor_alpha_dial_grid`'s coverage gate. See "
+        "`base_scorer_beta_dial_grid`'s coverage gate. See "
         '`mwb/scripts/compute_dataset_stats.py`.\n\n')
     for name in ORDER:
       if name not in scorer_lists:

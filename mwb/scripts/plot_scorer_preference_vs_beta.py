@@ -1,40 +1,40 @@
-"""Plots <adequacy|fluency>_orientation(metametric_alpha; D) vs. alpha, plus
-ESS(w*(alpha)), from the cache written by compute_scorer_orientation_vs_alpha.py
-(output/data/scorer_orientation_<tag>.npz) -- pure plotting, no solver or
+"""Plots <adequacy|fluency>_preference(metametric_beta; D) vs. beta, plus
+ESS(w*(beta)), from the cache written by compute_scorer_preference_vs_beta.py
+(output/preference_vs_beta_<tag>.npz) -- pure plotting, no solver or
 SPA-permutation work happens here, so restyling is cheap to iterate on.
 metametric (spa, pa, or pearson) is read from the cache itself (whichever
-compute_scorer_orientation_vs_alpha.py --metametric produced it). This is
+compute_scorer_preference_vs_beta.py --metametric produced it). This is
 the paper's main-results plot (Figure 3 and its appendix grid).
 
-One independent dot per alpha for each family's mean-across-donors value
+One independent dot per beta for each family's mean-across-base scorers value
 (no connecting line -- see _add_ess_colored_dots for why), colored by ESS:
 fully transparent at/below the absolute floor ESS=1, then a 2-segment
 cubic Hermite spline ramp (SplineReliabilityNorm) up to opaque dark color
 at ESS=K -- plus a dashed reference at 0.5 (no systematic preference) and
-a dotted vertical line at alpha_0(D). In the paper's committed setup
-(--green-family DiagTJ), three families are drawn together: AF ("Adequacy
+a dotted vertical line at beta_0(D). In the paper's committed setup
+(--family-set AFTJ), three families are drawn together: AF ("Adequacy
 over fluency", purple -- the single-dial Adequacy-fluency preference
-family, replacing the separate single-aspect A/B pair), T ("MQM
+family, replacing the separate single-aspect A/F pair), T ("MQM
 adherence", green), and J ("Explainability by MQM", gold) -- matching
-Figure 3's legend exactly. Per-donor shadow curves
-(compute_scorer_orientation_vs_alpha.py's AF/A/B/T/J matrices, already
+Figure 3's legend exactly. Per-base scorer shadow curves
+(compute_scorer_preference_vs_beta.py's AF/A/F/T/J matrices, already
 cached, no recomputation) are optionally drawn behind the mean via
---shadow-donors -- see _draw_orientation_axes's shadow_curves param.
+--shadow-base-scorers -- see _draw_preference_axes's shadow_curves param.
 
-Usage: python -m mwb.scripts.plot_scorer_orientation_vs_alpha [--dataset ende21]
+Usage: python -m mwb.scripts.plot_scorer_preference_vs_beta [--dataset ende21]
            [--n-steps 5] [--step 0.01] [--full-range | --union-grid] [--metametric spa|pa|pearson]
            [--synthesis offset|additive|additive_mean] [--dial-preset linear|geometric]
-           [--aspect-donors | --per-donor] [--shadow-donors] [--legend | --no-legend] [--tag TAG]
+           [--aspect-base-scorers | --per-base-scorer] [--shadow-base-scorers] [--legend | --no-legend] [--tag TAG]
 (same grid/metametric/synthesis/dial-preset flags as the compute script --
 used only to derive the matching cache filename via mwb.lib.
-synthetic_scorer_orientation.orientation_tag/union_grid_tag, unless --data
+synthetic_scorer_preference.preference_tag/union_grid_tag, unless --data
 points at a cache file directly)
 
-A donor-capability screen (excluding donors whose dial=1 endpoint doesn't
+A base scorer-capability screen (excluding base scorers whose dial=1 endpoint doesn't
 correlate with the true aspect) was tried and dropped: it barely moved the
-dataset-level curves in practice (a donor's orientation_score turned out to
+dataset-level curves in practice (a base scorer's preference_score turned out to
 be close to uncorrelated with its own capability), so this script always
-averages over every cached donor -- the simple version.
+averages over every cached base scorer -- the simple version.
 """
 
 import argparse
@@ -51,49 +51,49 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.lines import Line2D
 
 from mwb.lib.synth25_metametrics import SYNTH25_METAMETRICS
-from mwb.lib.synth25_orientation import load_synth25_pools, load_synth25_pools_J
-from mwb.lib.synth25_orientation import pools_tag as synth25_pools_tag
-from mwb.lib.synth25_orientation import pools_tag_J as synth25_pools_tag_J
-from mwb.lib.synthetic_scorer_alpha_grid import ASPECT_DONORS
-from mwb.lib.alpha import alpha_to_beta
-from mwb.lib.synthetic_scorer_orientation import load_orientation_data, orientation_tag, union_grid_tag
+from mwb.lib.synth25_preference import load_synth25_pools, load_synth25_pools_J
+from mwb.lib.synth25_preference import pools_tag as synth25_pools_tag
+from mwb.lib.synth25_preference import pools_tag_J as synth25_pools_tag_J
+from mwb.lib.synthetic_scorer_beta_grid import ASPECT_BASE_SCORERS
+from mwb.lib.beta import beta_to_beta_std
+from mwb.lib.synthetic_scorer_preference import load_preference_data, preference_tag, union_grid_tag
 from mwb.lib.synthetic_scorers import default_dial_preset
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-DATA_DIR = os.path.join(ROOT, 'output', 'data')
-ARTIFACTS_DIR = os.path.join(ROOT, 'output', 'scorer_orientation')
+DATA_DIR = os.path.join(ROOT, 'output')
+ARTIFACTS_DIR = os.path.join(ROOT, 'output')
 
 _PANEL_TITLES = {
-    'A': 'Adequacy orientation (A-family)', 'B': 'Fluency orientation (B-family)',
+    'A': 'Adequacy preference (A-family)', 'F': 'Fluency preference (F-family)',
     'AF': 'Adequacy over fluency (AF-family)',
-    'T': 'AllMQM orientation (T-family)', 'J': 'Joint orientation (J-family)',
+    'T': 'AllMQM preference (T-family)', 'J': 'Joint preference (J-family)',
 }
 # --poster's short legend labels -- everywhere else in this file uses
 # _PANEL_TITLES; this is purely a presentation-render relabeling of the
 # SAME families, not a new taxonomy. AF/T/J's poster labels match the
 # paper's own Figure 3 legend text exactly ("Adequacy over fluency", "MQM
-# adherence", "Explainability by MQM"); A/B (the footnoted single-aspect
-# families, not used in the paper's committed --green-family DiagTJ mode)
+# adherence", "Explainability by MQM"); A/F (the footnoted single-aspect
+# families, not used in the paper's committed --family-set AFTJ mode)
 # keep their own separate labels.
 _POSTER_PANEL_TITLES = {
-    'A': 'Adequacy family', 'B': 'Fluency family', 'AF': 'Adequacy over fluency',
+    'A': 'Adequacy family', 'F': 'Fluency family', 'AF': 'Adequacy over fluency',
     'T': 'MQM adherence', 'J': 'Explainability by MQM',
 }
 # Light/dark pairs per family -- dark end matches the flat colors used
 # elsewhere in this project (mwb.lib.spa_plane's adequacy=blue/fluency=red
 # convention); light end is the "type 2" style's own LIGHT_BLUE, mirrored
-# in hue for the B panel. T and J are both orientation-neutral by
-# construction (T because t=a+b favors neither aspect; J because it
+# in hue for the F panel. T and J are both preference-neutral by
+# construction (T because t=a+f favors neither aspect; J because it
 # conditions on both aspects jointly rather than either alone), which used
 # to get them the same dark green when a cache only ever had one of the
-# two -- --green-family DiagTJ caches now have BOTH T and J at once, so they
+# two -- --family-set AFTJ caches now have BOTH T and J at once, so they
 # need visually distinct colors: T stays dark green, J gets dark gold
 # (darkgoldenrod), chosen to read clearly against green/blue/red at the
 # same low marker alpha. AF (the paper's actual Adequacy-fluency family,
-# replacing A/B in that same DiagTJ cache) gets a dark purple, matching the
+# replacing A/F in that same AFTJ cache) gets a dark purple, matching the
 # paper's own Figure 3 rendering.
 _DARK_COLOR = {
-    'A': (0.03, 0.15, 0.35), 'B': (0.35, 0.03, 0.05), 'AF': (0.25, 0.03, 0.30),
+    'A': (0.03, 0.15, 0.35), 'F': (0.35, 0.03, 0.05), 'AF': (0.25, 0.03, 0.30),
     'T': (0.05, 0.30, 0.05), 'J': (0.72, 0.53, 0.04),
 }
 # --poster's own base colors: pushed further apart in hue (purer blue,
@@ -102,7 +102,7 @@ _DARK_COLOR = {
 # below) while keeping blue and green as each family's main color, per
 # request.
 _POSTER_DARK_COLOR = {
-    'A': (0.0, 0.05, 0.65), 'B': (0.35, 0.03, 0.05), 'AF': (0.45, 0.0, 0.55),
+    'A': (0.0, 0.05, 0.65), 'F': (0.35, 0.03, 0.05), 'AF': (0.45, 0.0, 0.55),
     'T': (0.0, 0.42, 0.0), 'J': (0.72, 0.53, 0.04),
 }
 
@@ -119,20 +119,20 @@ _MEAN_RED = '#c81e1e'
 _ESS_FRAC_BIN_WIDTH = 0.02
 
 # --overlay-synth25 pool markers (mwb.lib.synth25_metametrics.POOL_BLOCKS):
-# distinct shape per pool, sharing color with the family (A/B/T) it's
+# distinct shape per pool, sharing color with the family (A/F/T) it's
 # plotted in (_DARK_COLOR). 'real+adeq+flu' is Row 7 -- the branded
 # SPA_synth25/PA_synth25 baseline this whole project reports elsewhere --
 # so it gets both a distinct marker (circle, matching the plain dot-color
 # legend's own marker) AND a visibly larger size; the other 5 are
 # comparison points, same size as each other, shapes chosen to look
-# distinct even when several land close together on the alpha axis.
+# distinct even when several land close together on the beta axis.
 _POOL_MARKERS = {
     'real+adeq+flu': 'o', 'real+adeq': '^', 'real+flu': 's', 'adeq+flu': 'D', 'flu': 'v', 'adeq': 'P',
 }
 _POOL_MARKER_SIZE_LARGE = 45
 _POOL_MARKER_SIZE_DEFAULT = 55
 _POOL_MARKER_SIZE = {'real+adeq+flu': _POOL_MARKER_SIZE_LARGE+10, 'adeq+flu':_POOL_MARKER_SIZE_LARGE-5, 'real+flu':_POOL_MARKER_SIZE_LARGE-5}
-_FAMILY_FILE_PREFIX = {'A': 'adequacy', 'B': 'fluency', 'AF': 'adequacy_over_fluency', 'T': 'allmqm', 'J': 'joint'}
+_FAMILY_FILE_PREFIX = {'A': 'adequacy', 'F': 'fluency', 'AF': 'adequacy_over_fluency', 'T': 'allmqm', 'J': 'joint'}
 
 
 # Fully transparent at/below this ABSOLUTE ESS value, not a fraction of K:
@@ -288,10 +288,10 @@ def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs, x_offset=0.012, 
     strip_ax.set_yticks([])
 
 
-def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
-  """One independent marker per (alpha, y) point, colored by cmap(norm(
+def _add_ess_colored_dots(ax, betas, ys, ess_over_k, cmap, norm, size, zorder):
+  """One independent marker per (beta, y) point, colored by cmap(norm(
   ess_over_k)) -- no connecting line at all. A LineCollection was tried
-  first (segments between consecutive points): with one segment per alpha
+  first (segments between consecutive points): with one segment per beta
   step (n_sub=1, needed to avoid a separate alpha-compositing bug where
   many overlapping subdivided segments stacked their alpha channels far
   darker than intended), each segment is rendered as its own independent
@@ -300,8 +300,8 @@ def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
   sidestep the whole segment-joining problem, at the honest cost of
   showing exactly what it is: discrete sampled points, not a curve.
 
-  Non-uniform alpha grids (e.g. mwb.lib.alpha.union_alpha_grid, which mixes
-  alpha_ij's exact values into a uniform sweep) can place two dots close
+  Non-uniform beta grids (e.g. mwb.lib.beta.union_beta_grid, which mixes
+  beta_ij's exact values into a uniform sweep) can place two dots close
   enough to visually overlap. Plain ax.scatter with a translucent facecolor
   would let matplotlib's normal painter's-algorithm blending COMPOSITE them
   -- the overlap region ends up darker than either dot alone, i.e.
@@ -319,14 +319,14 @@ def _add_ess_colored_dots(ax, alphas, ys, ess_over_k, cmap, norm, size, zorder):
   white = np.ones((len(opacity), 3))
   solid_rgb = opacity[:, None] * rgba[:, :3] + (1 - opacity[:, None]) * white
   order = np.argsort(opacity, kind='stable')
-  ax.scatter(np.asarray(alphas)[order], np.asarray(ys)[order], c=solid_rgb[order], s=size,
+  ax.scatter(np.asarray(betas)[order], np.asarray(ys)[order], c=solid_rgb[order], s=size,
              linewidths=0, zorder=zorder)
 
 
-def _add_ess_colored_line(ax, alphas, ys, ess_over_k, cmap, norm, linewidth, zorder):
+def _add_ess_colored_line(ax, betas, ys, ess_over_k, cmap, norm, linewidth, zorder):
   """Connecting line whose per-segment color intensity matches the
   ESS-colored dots it links (_add_ess_colored_dots) -- each segment
-  between two adjacent (in alpha) finite points is colored by the AVERAGE
+  between two adjacent (in beta) finite points is colored by the AVERAGE
   of its two endpoints' reliability color, pre-blended against white and
   painted fully OPAQUE, same technique and same reason as the dots: no
   alpha channel left to stack means no compositing-darkens-overlaps
@@ -338,11 +338,11 @@ def _add_ess_colored_line(ax, alphas, ys, ess_over_k, cmap, norm, linewidth, zor
   gap at the joint) avoids it. Segments only connect adjacent FINITE
   points -- a gap in the data breaks the line rather than interpolating
   across it."""
-  alphas = np.asarray(alphas, dtype=float)
+  betas = np.asarray(betas, dtype=float)
   ys = np.asarray(ys, dtype=float)
   ess_over_k = np.asarray(ess_over_k, dtype=float)
-  order = np.argsort(alphas)
-  xs, ys, ess = alphas[order], ys[order], ess_over_k[order]
+  order = np.argsort(betas)
+  xs, ys, ess = betas[order], ys[order], ess_over_k[order]
   finite = np.isfinite(ys)
   xs, ys, ess = xs[finite], ys[finite], ess[finite]
   if len(xs) < 2:
@@ -364,49 +364,49 @@ def _add_ess_colored_line(ax, alphas, ys, ess_over_k, cmap, norm, linewidth, zor
 _LOO_MARKER = 'X'
 
 
-def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, center_alpha, families=('A', 'B'),
-                            synth25_pools=None, synth25_metric_label='', loo_points=None, shadow_curves=None,
-                            xlabel='alpha (meta-evaluation balance)', ylabel='orientation score', poster=False,
+def _draw_preference_axes(ax, betas, mean_curves, ess_over_k, cmaps, norm, center_beta, families=('A', 'F'),
+                            synth25_pools=None, synth25_metametric_label='', loo_points=None, shadow_curves=None,
+                            xlabel='beta (meta-evaluation balance)', ylabel='preference score', poster=False,
                             line_cmaps=None, legend=True):
-  """`families` (A=adequacy, B=fluency, and/or the cache's third family --
-  T=orientation-neutral All-MQM or J=orientation-neutral Joint, whichever
+  """`families` (A=adequacy, F=fluency, and/or the cache's third family --
+  T=preference-neutral All-MQM or J=preference-neutral Joint, whichever
   is present) overlaid on one axes -- distinct by hue (cmaps['A']=blue,
-  cmaps['B']=red, cmaps['T']/cmaps['J']=green), sharing the x-axis (alpha),
-  the y-axis (orientation score), and the reliability norm (ESS depends
-  only on alpha, not on family).
+  cmaps['F']=red, cmaps['T']/cmaps['J']=green), sharing the x-axis (beta),
+  the y-axis (preference score), and the reliability norm (ESS depends
+  only on beta, not on family).
 
   legend: draw the dot-color/pool/leave-one-out legends (default True).
   False skips all three -- the markers/curves themselves are unaffected,
   only their legends -- for a multi-panel grid where repeating the same
   legend in every panel would be redundant (see the caller's --legend).
 
-  shadow_curves: optional {family: (n_donors, n_alpha)} -- the SAME raw
-  per-donor matrices compute_scorer_orientation_vs_alpha.py already caches
-  (data['A']/data['B']/data['T']/data['J']), no recomputation needed. Each
-  donor row is drawn as ONE plain, constant-alpha line (not the mean dots'
+  shadow_curves: optional {family: (n_base_scorers, n_beta)} -- the SAME raw
+  per-base scorer matrices compute_scorer_preference_vs_beta.py already caches
+  (data['A']/data['F']/data['T']/data['J']), no recomputation needed. Each
+  base scorer row is drawn as ONE plain, constant-alpha line (not the mean dots'
   per-point ESS coloring -- a LineCollection with per-segment alpha hits
   the compositing bug _add_ess_colored_dots's own docstring describes, and
-  30-ish donors' worth of per-alpha dots would just be visual noise, not a
-  legible line). Constant alpha instead means overlapping donor lines
-  compositing darker IS the intended signal here (more donors agreeing at
-  that (alpha, orientation) cell), unlike the bugs elsewhere in this file
+  30-ish base scorers' worth of per-beta dots would just be visual noise, not a
+  legible line). Constant alpha instead means overlapping base scorer lines
+  compositing darker IS the intended signal here (more base scorers agreeing at
+  that (beta, preference) cell), unlike the bugs elsewhere in this file
   that per-segment/per-dot alpha stacking was carefully engineered away
   from. Drawn at low zorder, under the mean dots, so the bold mean curve
   stays the visual foreground and the shadows read as spread/dispersion
   behind it.
 
-  synth25_pools: optional {pool_name: {'alpha0': .., 'A': .., 'B': ..,
-  'T': .., 'J': ..}} from mwb.lib.synth25_orientation.load_synth25_pools (one
+  synth25_pools: optional {pool_name: {'beta_0': .., 'A': .., 'F': ..,
+  'T': .., 'J': ..}} from mwb.lib.synth25_preference.load_synth25_pools (one
   entry per mwb.lib.synth25_metametrics.POOL_BLOCKS pool); 'J' is only present
   when the caller has merged it in from load_synth25_pools_J (a SEPARATE
-  cache -- mwb.lib.synth25_orientation never computes J alongside A/B/T, see
-  its "J (Joint) family" section), for overlaying e.g. additive_mean's A/B
+  cache -- mwb.lib.synth25_preference never computes J alongside A/F/T, see
+  its "J (Joint) family" section), for overlaying e.g. additive_mean's A/F
   pool markers next to offset's negative-dial J instead of additive_mean's
   own T. Each pool has its OWN natural
-  alpha_0 (a property of that pool's system-level Adequacy/Fluency MQM
-  composition, independent of alpha reweighting) -- so rather than a flat
+  beta_0 (a property of that pool's system-level Adequacy/Fluency MQM
+  composition, independent of beta reweighting) -- so rather than a flat
   horizontal reference line, each (pool, family) cell is drawn as ONE
-  MARKER at (pool's alpha_0, that pool's orientation): color = family
+  MARKER at (pool's beta_0, that pool's preference): color = family
   (cmaps[label](1.0), shared with the dot-color legend), shape = pool
   (_POOL_MARKERS), size = large for 'real+adeq+flu' (Row 7, the branded
   SPA_synth25/PA_synth25 baseline) and smaller for the other 5 -- own
@@ -414,11 +414,11 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   legend so the two encodings (dot color = reliability, marker shape =
   which pool) don't get conflated.
 
-  loo_points: optional {'dropped_systems': [...], 'alpha0': (K,), 'A':
-  (K,), 'B': (K,), 'T': (K,), 'J': (K,)} from compute_scorer_orientation_
+  loo_points: optional {'dropped_systems': [...], 'beta_0': (K,), 'A':
+  (K,), 'F': (K,), 'T': (K,), 'J': (K,)} from compute_scorer_preference_
   leave_one_out.py -- one point per leave-one-out subset D' = D \\ {s},
-  plotted at that subset's OWN alpha_0(D') (the uniform-weight balance,
-  mwb.lib.alpha.alpha_0's own definition -- no reweight_exact solve needed).
+  plotted at that subset's OWN beta_0(D') (the uniform-weight balance,
+  mwb.lib.beta.beta_0's own definition -- no reweight_exact solve needed).
   Independent overlay from synth25_pools: same plain weighted-SPA/PA
   machinery as the main curves, not the synth25 union metametric. Unlike
   the pool markers, every point shares ONE marker icon (_LOO_MARKER) --
@@ -441,7 +441,7 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   # points^2, so diameter ~= 2*sqrt(dot_size/pi) ~= 18pt at 260) -- at
   # line_width <= dot diameter the dots (drawn on top, higher zorder)
   # fully occlude the line beneath them everywhere they don't overlap a
-  # neighboring dot's gap, which given how densely these alpha grids are
+  # neighboring dot's gap, which given how densely these beta grids are
   # sampled is essentially nowhere; wide enough to peek out past each
   # dot's edge as a visible dark outline/halo instead.
   line_width = 8.0 if poster else 1.0
@@ -458,37 +458,37 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   # doesn't hit the seam/gap problem _add_ess_colored_dots abandoned a
   # LineCollection over.
   for label in families:
-    _add_ess_colored_line(ax, alphas, mean_curves[label], ess_over_k, line_cmaps[label], norm, linewidth=line_width,
+    _add_ess_colored_line(ax, betas, mean_curves[label], ess_over_k, line_cmaps[label], norm, linewidth=line_width,
                            zorder=3)
 
   if shadow_curves:
-    order = np.argsort(alphas)
-    xs_sorted = np.asarray(alphas)[order]
+    order = np.argsort(betas)
+    xs_sorted = np.asarray(betas)[order]
     for label in families:
-      donor_matrix = shadow_curves.get(label)
-      if donor_matrix is None:
+      base_scorer_matrix = shadow_curves.get(label)
+      if base_scorer_matrix is None:
         continue
       color = cmaps[label](1.0)[:3]
-      for donor_row in np.asarray(donor_matrix):
-        ys_sorted = donor_row[order]
+      for base_scorer_row in np.asarray(base_scorer_matrix):
+        ys_sorted = base_scorer_row[order]
         finite = ~np.isnan(ys_sorted)
         ax.plot(xs_sorted[finite], ys_sorted[finite], color=color, linewidth=0.5, alpha=0.12, zorder=2)
 
   for label in families:
-    _add_ess_colored_dots(ax, alphas, mean_curves[label], ess_over_k, cmaps[label], norm, size=dot_size, zorder=4)
+    _add_ess_colored_dots(ax, betas, mean_curves[label], ess_over_k, cmaps[label], norm, size=dot_size, zorder=4)
 
   # zorder above the dots (4) so these reference lines/the axes' own
   # border stay visible ON TOP of the (now much thicker/bigger) curves and
   # markers instead of being painted over by them.
   ref_line_zorder = 5 if poster else 1
   ax.axhline(0.5, color='black', linewidth=0.8, linestyle='--', alpha=0.5, zorder=ref_line_zorder)
-  center_idx = int(np.argmin(np.abs(np.asarray(alphas) - center_alpha)))
-  ax.axvline(alphas[center_idx], color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=ref_line_zorder)
+  center_idx = int(np.argmin(np.abs(np.asarray(betas) - center_beta)))
+  ax.axvline(betas[center_idx], color='black', linewidth=0.8, linestyle=':', alpha=0.6, zorder=ref_line_zorder)
   if poster:
     for spine in ax.spines.values():
       spine.set_zorder(6)
 
-  ax.set_xlim(min(alphas), max(alphas))
+  ax.set_xlim(min(betas), max(betas))
   ax.set_ylim(0, 1) if poster else ax.set_ylim(-0.02, 1.02)
   ax.set_xlabel(xlabel, fontsize=axis_label_fontsize)
   ax.set_ylabel(ylabel, fontsize=axis_label_fontsize)
@@ -504,7 +504,7 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
       for label in families
   ]
   if shadow_curves:
-    proxies.append(Line2D([0], [0], color='0.4', linewidth=1.2, alpha=0.5, label='individual donor (faint)'))
+    proxies.append(Line2D([0], [0], color='0.4', linewidth=1.2, alpha=0.5, label='individual base_scorer (faint)'))
   dot_legend = None
   if legend:
     if poster:
@@ -531,20 +531,20 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
   pool_proxies = []
   if synth25_pools:
     for pool_name, info in synth25_pools.items():
-      a0 = info.get('alpha0')
-      if a0 is None or a0 != a0:  # excludes NaN/absent
+      beta0 = info.get('beta_0')
+      if beta0 is None or beta0 != beta0:  # excludes NaN/absent
         continue
       marker = _POOL_MARKERS.get(pool_name, 'o')
       size = _POOL_MARKER_SIZE.get(pool_name, _POOL_MARKER_SIZE_DEFAULT) * pool_marker_mult
       drawn = False
-      for label in families:  # NOT ('A','B','T','J') -- info can hold both T and J (T from the main
-                               # A/B/T pools cache, J merged in separately), but only `families` (whichever
+      for label in families:  # NOT ('A','F','T','J') -- info can hold both T and J (T from the main
+                               # A/F/T pools cache, J merged in separately), but only `families` (whichever
                                # of T/J the curve itself is using) should ever be drawn, or T and J -- both
                                # green -- would draw two overlapping/duplicate-looking markers per pool.
         y = info.get(label)
         if y is None or y != y or label not in cmaps:
           continue
-        ax.scatter([a0], [y], marker=marker, s=size, color=cmaps[label](1.0), edgecolors='black',
+        ax.scatter([beta0], [y], marker=marker, s=size, color=cmaps[label](1.0), edgecolors='black',
                    linewidths=1, alpha=0.5, zorder=6)
         drawn = True
       if drawn:
@@ -577,7 +577,7 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
       else:
         pool_legend = ax.legend(handles=pool_proxies, fontsize=legend_fontsize, loc='upper center',
                                  bbox_to_anchor=(0.95, -0.14), ncol=2,
-                                 title=f'pool (marker shape) @ its own alpha_0 ({synth25_metric_label})',
+                                 title=f'pool (marker shape) @ its own beta_0 ({synth25_metametric_label})',
                                  title_fontsize=legend_title_fontsize)
       ax.add_artist(pool_legend)
 
@@ -586,14 +586,14 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
     # (_LOO_MARKER) -- unlike the synth25 pools, there's no shape encoding
     # here (just K roughly-similar-sized subsets, not 6 qualitatively
     # different pool compositions); only color (by family, same cmaps as
-    # the dot-color legend) distinguishes A/B/T/J at each subset's own
-    # alpha_0(D').
-    a0s = loo_points['alpha0']
+    # the dot-color legend) distinguishes A/F/T/J at each subset's own
+    # beta_0(D').
+    beta_0s = loo_points['beta_0']
     for label in families:
       y = loo_points.get(label)
       if y is None:
         continue
-      ax.scatter(a0s, y, marker=_LOO_MARKER, s=34, color=cmaps[label](1.0), edgecolors='black',
+      ax.scatter(beta_0s, y, marker=_LOO_MARKER, s=34, color=cmaps[label](1.0), edgecolors='black',
                  linewidths=0.6, alpha=0.55, zorder=6)
     loo_proxy = Line2D([0], [0], marker=_LOO_MARKER, linestyle='none', color='0.5', markeredgecolor='black',
                         alpha=0.55, markersize=6,
@@ -601,18 +601,18 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
     if legend:
       loo_anchor = (0.95, -0.22) if pool_proxies else (0.95, -0.14)
       ax.legend(handles=[loo_proxy], fontsize=7, loc='upper center', bbox_to_anchor=loo_anchor,
-                title="leave-one-out (unweighted D') @ alpha_0(D')", title_fontsize=7)
+                title="leave-one-out (unweighted D') @ beta_0(D')", title_fontsize=7)
 
     # Overrides the full-range xlim/ylim set above with a zoom onto just
-    # the loo markers' own (alpha, orientation) span + a small margin --
+    # the loo markers' own (beta, preference) span + a small margin --
     # ONLY for --overlay-loo (this call path), since the markers otherwise
-    # cluster in a narrow band (alpha_0(D') barely moves when dropping one
+    # cluster in a narrow band (beta_0(D') barely moves when dropping one
     # of K systems) inside an otherwise mostly-empty full-range plot.
     # Deliberately not applied to the default/--overlay-synth25 plots.
     fam_vals = [loo_points[label] for label in families if loo_points.get(label) is not None]
     if fam_vals:
       y_all = np.concatenate(fam_vals)
-      x_lo, x_hi = float(np.min(a0s)), float(np.max(a0s))
+      x_lo, x_hi = float(np.min(beta_0s)), float(np.max(beta_0s))
       y_lo, y_hi = float(np.min(y_all)), float(np.max(y_all))
       x_margin = max(0.05 * (x_hi - x_lo), 0.01)
       y_margin = max(0.05 * (y_hi - y_lo), 0.01)
@@ -620,30 +620,30 @@ def _draw_orientation_axes(ax, alphas, mean_curves, ess_over_k, cmaps, norm, cen
       ax.set_ylim(y_lo - y_margin, y_hi + y_margin)
 
 
-def _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_preset_title, out_dir,
+def _plot_family_vs_ess(data, family, K, base_scorer_desc, synthesis_title, dial_preset_title, out_dir,
                          base, grid_suffix, metametric_suffix, synthesis_suffix, dial_preset_suffix,
-                         aspectdonors_suffix, green_family_suffix=''):
-  """One family's (A, B, T, or J) orientation score directly against
-  ESS(alpha)/K (reliability fraction, not raw ESS -- matches
-  plot_allmqm_orientation_vs_ess_pooled.py's pooled version so bucket
-  widths mean the same thing in both places) rather than alpha -- ESS is
-  orientation-neutral by construction for T/J (not for A/B, but the same
+                         aspect_base_scorers_suffix, family_set_suffix=''):
+  """One family's (A, F, T, or J) preference score directly against
+  ESS(beta)/K (reliability fraction, not raw ESS -- matches
+  plot_allmqm_preference_vs_ess_pooled.py's pooled version so bucket
+  widths mean the same thing in both places) rather than beta -- ESS is
+  preference-neutral by construction for T/J (not for A/F, but the same
   ESS-reliability question applies to them too: does the metametric's
   adequacy/fluency preference get noisier as ESS drops?). Light
-  (family-colored): every (alpha, donor) pair -- data[family] is already
-  (n_donors, n_alpha), so this is a reshape, not new computation. Red:
-  0.02-wide ESS/K buckets, averaging the raw (alpha, donor) points
+  (family-colored): every (beta, base scorer) pair -- data[family] is already
+  (n_base_scorers, n_beta), so this is a reshape, not new computation. Red:
+  0.02-wide ESS/K buckets, averaging the raw (beta, base scorer) points
   directly within each bucket (one averaging pass -- see
-  plot_allmqm_orientation_vs_ess_pooled.py's docstring for why this, not a
-  per-alpha donor-mean, is the natural aggregate), connected in x-order.
+  plot_allmqm_preference_vs_ess_pooled.py's docstring for why this, not a
+  per-beta base scorer-mean, is the natural aggregate), connected in x-order.
   No-op if this cache has no `family` (e.g. a cache missing T, or an older
   cache predating J)."""
   if data.get(family) is None:
     return
-  F = data[family]  # (n_donors, n_alpha)
-  ess_frac = data['ess'] / K  # (n_alpha,)
-  n_donors, n_alpha = F.shape
-  ess_frac_all = np.tile(ess_frac, n_donors)  # repeats per donor, matching F.ravel()'s donor-major order
+  F = data[family]  # (n_base_scorers, n_alpha)
+  ess_frac = data['ess'] / K  # (n_beta,)
+  n_base_scorers, n_beta = F.shape
+  ess_frac_all = np.tile(ess_frac, n_base_scorers)  # repeats per base_scorer, matching F.ravel()'s base_scorer-major order
   f_all = F.ravel()
   finite = ~np.isnan(f_all)
   x_raw, y_raw = ess_frac_all[finite], f_all[finite]
@@ -661,26 +661,26 @@ def _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_prese
   fig, ax = plt.subplots(figsize=(12, 10))
   ax.set_box_aspect(1)
   ax.scatter(x_raw, y_raw, color=_DARK_COLOR[family], s=6, alpha=0.15, linewidths=0,
-             zorder=2, label=f'{n_donors} donors x {n_alpha} alphas')
+             zorder=2, label=f'{n_base_scorers} base_scorers x {n_beta} betas')
   ax.plot(x_bucket, y_bucket, color=_MEAN_RED, linewidth=1.3, alpha=0.7, zorder=3)
   ax.scatter(x_bucket, y_bucket, color=_MEAN_RED, s=22, alpha=0.85, linewidths=0, zorder=3,
              label=f'{len(x_bucket)} buckets of {_ESS_FRAC_BIN_WIDTH:g}-wide ESS/K')
   ax.axhline(0.5, color='black', linewidth=0.8, linestyle='--', alpha=0.5, zorder=1)
   ax.set_xlim(0, 1)
   ax.set_ylim(-0.02, 1.02)
-  ax.set_xlabel('ESS(alpha) / K  (reliability fraction)')
+  ax.set_xlabel('ESS(beta) / K  (reliability fraction)')
   ax.set_ylabel(_PANEL_TITLES[family])
   ax.spines['top'].set_visible(False)
   ax.spines['right'].set_visible(False)
   ax.legend(fontsize=7, loc='lower right')
   fig.suptitle(f'{data["dataset"]}: {_PANEL_TITLES[family]} vs. ESS ({data["metametric"].upper()}, '
-               f'K={K} systems, {donor_desc}{synthesis_title}{dial_preset_title})', fontsize=10)
+               f'K={K} systems, {base_scorer_desc}{synthesis_title}{dial_preset_title})', fontsize=10)
   fig.tight_layout()
 
   plot_path = os.path.join(
       out_dir,
-      f'{_FAMILY_FILE_PREFIX[family]}_orientation_vs_ess_{base}{grid_suffix}{metametric_suffix}'
-      f'{synthesis_suffix}{dial_preset_suffix}{green_family_suffix}{aspectdonors_suffix}.png')
+      f'{_FAMILY_FILE_PREFIX[family]}_preference_vs_ess_{base}{grid_suffix}{metametric_suffix}'
+      f'{synthesis_suffix}{dial_preset_suffix}{family_set_suffix}{aspect_base_scorers_suffix}.png')
   fig.savefig(plot_path, dpi=150, bbox_inches='tight')
   plt.close(fig)
   print(f'Wrote {plot_path}', file=sys.stderr)
@@ -693,7 +693,7 @@ if __name__ == '__main__':
   parser.add_argument('--step', type=float, default=0.01)
   parser.add_argument('--full-range', action=argparse.BooleanOptionalAction, default=False)
   parser.add_argument('--union-grid', action=argparse.BooleanOptionalAction, default=True,
-                       help='load the union-alpha_ij-grid cache (compute_scorer_orientation_vs_alpha.py '
+                       help='load the union-beta_ij-grid cache (compute_scorer_preference_vs_beta.py '
                             '--union-grid) instead of the other grid modes. Default: True (the committed '
                             'setup).')
   parser.add_argument('--metametric', choices=['spa', 'pa', 'pearson'], default='spa',
@@ -704,31 +704,31 @@ if __name__ == '__main__':
   parser.add_argument('--dial-preset', choices=['linear', 'geometric', 'extended', 'symmetric'], default='symmetric',
                        help='which cached dial grid to load/plot -- must match the compute run\'s '
                             "--dial-preset. Default: 'symmetric' (the committed setup, matching "
-                            'compute_scorer_orientation_vs_alpha.py\'s own default).')
-  parser.add_argument('--green-family', choices=['default', 'Jneg', 'DiagTJ'], default='DiagTJ',
-                       help='must match the compute run\'s --green-family -- only affects the auto-derived '
-                            'cache tag (appends _Jneg/_DiagTJ, see compute_scorer_orientation_vs_alpha.py) '
-                            'when --data/--tag is not given. Default: DiagTJ (the paper\'s committed setup).')
-  parser.add_argument('--aspect-donors', action=argparse.BooleanOptionalAction, default=False,
-                       help='load the ASPECT_DONORS cache (compute_scorer_orientation_vs_alpha.py '
-                            '--aspect-donors) and draw one panel per donor instead of the '
-                            'mean-across-donors single-axes plot')
-  parser.add_argument('--per-donor', action=argparse.BooleanOptionalAction, default=False,
-                       help="draw one square panel per donor already in the cache (data['donors'], "
+                            'compute_scorer_preference_vs_beta.py\'s own default).')
+  parser.add_argument('--family-set', choices=['default', 'Jneg', 'AFTJ'], default='AFTJ',
+                       help='must match the compute run\'s --family-set -- only affects the auto-derived '
+                            'cache tag (appends _Jneg/_AFTJ, see compute_scorer_preference_vs_beta.py) '
+                            'when --data/--tag is not given. Default: AFTJ (the paper\'s committed setup).')
+  parser.add_argument('--aspect-base-scorers', action=argparse.BooleanOptionalAction, default=False,
+                       help='load the ASPECT_BASE_SCORERS cache (compute_scorer_preference_vs_beta.py '
+                            '--aspect-base-scorers) and draw one panel per base scorer instead of the '
+                            'mean-across-base_scorers single-axes plot')
+  parser.add_argument('--per-base-scorer', action=argparse.BooleanOptionalAction, default=False,
+                       help="draw one square panel per base_scorer already in the cache (data['base_scorers'], "
                             'sorted -- a real_scorers-screened cache typically has dozens), each showing '
-                            "that donor's OWN curves, no averaging -- a grid (not --aspect-donors' single "
+                            "that base scorer's OWN curves, no averaging -- a grid (not --aspect-base-scorers' single "
                             'row, which only ever has 3 panels). Same underlying cache as the default '
-                            'mean-across-donors plot; this only changes how it is drawn.')
+                            'mean-across-base_scorers plot; this only changes how it is drawn.')
   parser.add_argument('--tag', type=str, default=None, help='override the auto-derived cache filename tag')
-  parser.add_argument('--data', type=str, default=None, help='explicit path to a scorer_orientation_*.npz cache')
+  parser.add_argument('--data', type=str, default=None, help='explicit path to a preference_vs_beta_*.npz cache')
   parser.add_argument('--overlay-synth25', action=argparse.BooleanOptionalAction, default=True,
-                       help='overlay one marker per (pool, family) -- adequacy/fluency/allmqm orientation of '
-                            'the SPA_synth25/PA_synth25 system-synthesis metametric (mwb.lib.synth25_orientation, '
+                       help='overlay one marker per (pool, family) -- adequacy/fluency/allmqm preference of '
+                            'the SPA_synth25/PA_synth25 system-synthesis metametric (mwb.lib.synth25_preference, '
                             "Shayegh et al. 2025's system-synthesis method), for EACH of mwb.lib.synth25_"
                             'metametrics.POOL_BLOCKS\' 6 pools (real+adeq+flu = Row 7, the branded baseline, '
-                            'plus 5 comparison pools), each plotted at that POOL\'S OWN natural alpha_0 (not '
-                            'at every alpha -- these are fixed points, not curves), from the cache written by '
-                            'compute_synth25_orientation.py --all-pools --metametric matching --metametric '
+                            'plus 5 comparison pools), each plotted at that POOL\'S OWN natural beta_0 (not '
+                            'at every beta -- these are fixed points, not curves), from the cache written by '
+                            'compute_synth25_preference.py --all-pools --metametric matching --metametric '
                             'above.')
   parser.add_argument('--legend', action=argparse.BooleanOptionalAction, default=True,
                        help='draw the dot-color/pool/leave-one-out legends on the default single-axes plot. '
@@ -736,37 +736,37 @@ if __name__ == '__main__':
                             'grid (Figure "results_all") where repeating the same legend in every panel would '
                             'be redundant; the main-text figure keeps it on.')
   parser.add_argument('--vs-ess', action=argparse.BooleanOptionalAction, default=False,
-                       help='ALSO generate the second family of figures -- each of A/B/T/J plotted directly '
-                            'against ESS(alpha)/K (_plot_family_vs_ess) -- off by default: these used to be '
+                       help='ALSO generate the second family of figures -- each of A/F/T/J plotted directly '
+                            'against ESS(beta)/K (_plot_family_vs_ess) -- off by default: these used to be '
                             'generated unconditionally on every run as a mandatory side effect of the main '
-                            'orientation-vs-alpha plot; now opt-in only, requested explicitly via this flag.')
+                            'preference-vs-beta plot; now opt-in only, requested explicitly via this flag.')
   parser.add_argument('--overlay-loo', action=argparse.BooleanOptionalAction, default=False,
                        help='overlay one marker per (dropped system, family) from '
-                            'compute_scorer_orientation_leave_one_out.py -- for every leave-one-out subset '
-                            "D' = D \\ {s}, that subset's OWN alpha_0(D') (uniform-weight balance) and its "
-                            'A/B/T/J orientation there, using the SAME plain weighted-SPA/PA machinery as '
+                            'compute_scorer_preference_leave_one_out.py -- for every leave-one-out subset '
+                            "D' = D \\ {s}, that subset's OWN beta_0(D') (uniform-weight balance) and its "
+                            'A/F/T/J preference there, using the SAME plain weighted-SPA/PA machinery as '
                             'the main curves (not the synth25 union metametric). Unlike --overlay-synth25, '
                             'every point shares ONE marker icon (only color, by family, distinguishes them) '
                             '-- there is no pool-shape encoding here, just K leave-one-out subsets. '
                             'Independent of --overlay-synth25; both can be on at once.')
-  parser.add_argument('--shadow-donors', action=argparse.BooleanOptionalAction, default=False,
-                       help='draw one faint constant-alpha line per donor (data[\'A\']/[\'B\']/[\'T\']/[\'J\'], '
-                            'the (n_donors, n_alpha) matrices already in the cache -- no recomputation) '
-                            'behind the bold mean-across-donors dots, on the default single-axes plot only '
-                            '(not --aspect-donors/--per-donor, which already show one donor at a time). '
-                            'Shows spread/dispersion across donors that the mean curve alone hides.')
-  parser.add_argument('--beta-axis', action=argparse.BooleanOptionalAction, default=False,
-                       help='re-parameterize the x-axis from alpha to beta = 1 / (1 + sqrt(1/alpha - 1)) -- '
-                            'monotonically increasing over (0, 1] (beta(1)=1, beta(0.5)=0.5, beta->0 as '
-                            'alpha->0+), so every alpha-indexed array (mean curves, ESS, shadow lines, pool/'
-                            'loo markers\' own alpha0) stays correctly aligned, just relabeled on a new '
-                            'x-scale -- applied to every alpha-valued quantity on the plot (the dot x-'
-                            'positions, alpha_0(D)\'s vertical line, --overlay-synth25 pool markers\' alpha0, '
-                            '--overlay-loo markers\' alpha0). Default: False (plain alpha, unaffected).')
+  parser.add_argument('--shadow-base-scorers', action=argparse.BooleanOptionalAction, default=False,
+                       help='draw one faint constant-alpha line per base_scorer (data[\'A\']/[\'F\']/[\'T\']/[\'J\'], '
+                            'the (n_base_scorers, n_beta) matrices already in the cache -- no recomputation) '
+                            'behind the bold mean-across-base scorers dots, on the default single-axes plot only '
+                            '(not --aspect-base-scorers/--per-base-scorer, which already show one base scorer at a time). '
+                            'Shows spread/dispersion across base_scorers that the mean curve alone hides.')
+  parser.add_argument('--beta-std-axis', action=argparse.BooleanOptionalAction, default=False,
+                       help='re-parameterize the x-axis from beta to beta_std = 1 / (1 + sqrt(1/beta - 1)) -- '
+                            'monotonically increasing over (0, 1] (beta_std(1)=1, beta_std(0.5)=0.5, beta_std->0 '
+                            'as beta->0+), so every beta-indexed array (mean curves, ESS, shadow lines, pool/'
+                            'loo markers\' own beta_0) stays correctly aligned, just relabeled on a new '
+                            'x-scale -- applied to every beta-valued quantity on the plot (the dot x-'
+                            'positions, beta_0(D)\'s vertical line, --overlay-synth25 pool markers\' beta_0, '
+                            '--overlay-loo markers\' beta_0). Default: False (plain beta, unaffected).')
   parser.add_argument('--poster', action=argparse.BooleanOptionalAction, default=False,
                        help='presentation-size render on the default single-axes plot: bigger dots/lines/pool '
                             'markers, bigger fonts everywhere (axis labels, ticks, legend), short axis labels '
-                            '(\'beta\'/\'alpha\' and \'faithfullness\' instead of the verbose default text), '
+                            '(\'beta\'/\'beta_std\' and \'faithfullness\' instead of the verbose default text), '
                             'and no suptitle. Purely cosmetic -- no effect on the underlying data. Default: '
                             'False.')
   parser.add_argument('--format', choices=['png', 'pdf'], default='png',
@@ -784,85 +784,85 @@ if __name__ == '__main__':
     elif args.union_grid:
       tag = union_grid_tag(base, args.step, args.metametric, args.synthesis, args.dial_preset)
     else:
-      tag = orientation_tag(base, args.n_steps, args.step, args.full_range, args.metametric, args.synthesis,
+      tag = preference_tag(base, args.n_steps, args.step, args.full_range, args.metametric, args.synthesis,
                              args.dial_preset)
-    if args.aspect_donors and not args.tag:
-      tag += '_aspectdonors'
-    if args.green_family in ('Jneg', 'DiagTJ') and not args.tag:
-      tag += f'_{args.green_family}'
-    data_path = os.path.join(DATA_DIR, f'scorer_orientation_{tag}.npz')
+    if args.aspect_base_scorers and not args.tag:
+      tag += '_aspect_base_scorers'
+    if args.family_set in ('Jneg', 'AFTJ') and not args.tag:
+      tag += f'_{args.family_set}'
+    data_path = os.path.join(DATA_DIR, f'preference_vs_beta_{tag}.npz')
   if not os.path.exists(data_path):
-    sys.exit(f'{data_path} not found -- run compute_scorer_orientation_vs_alpha.py with matching flags first')
+    sys.exit(f'{data_path} not found -- run compute_scorer_preference_vs_beta.py with matching flags first')
 
-  data = load_orientation_data(data_path)
-  print(f'Loaded {data_path}: dataset={data["dataset"]}, {len(data["donors"])} donors, '
-        f'{len(data["alphas"])} alphas', file=sys.stderr)
+  data = load_preference_data(data_path)
+  print(f'Loaded {data_path}: dataset={data["dataset"]}, {len(data["base_scorers"])} base_scorers, '
+        f'{len(data["betas"])} betas', file=sys.stderr)
 
-  synth25_pools, synth25_metric_label = None, ''
+  synth25_pools, synth25_metametric_label = None, ''
   if args.overlay_synth25:
     synth25_metametric_name = f'{args.metametric}_synth25'
     assert synth25_metametric_name in SYNTH25_METAMETRICS
     synth25_tag = synth25_pools_tag(data['dataset'], synth25_metametric_name, args.synthesis, args.dial_preset)
-    synth25_path = os.path.join(DATA_DIR, f'synth25_orientation_{synth25_tag}.npz')
+    synth25_path = os.path.join(DATA_DIR, f'synth25_preference_{synth25_tag}.npz')
     if not os.path.exists(synth25_path):
-      sys.exit(f'{synth25_path} not found -- run compute_synth25_orientation.py --dataset {data["dataset"]} '
+      sys.exit(f'{synth25_path} not found -- run compute_synth25_preference.py --dataset {data["dataset"]} '
                 f'--metametric {args.metametric} --synthesis {args.synthesis} --dial-preset {args.dial_preset} '
                 f'--all-pools first')
     synth25_data = load_synth25_pools(synth25_path)
-    pool_families = [lbl for lbl in ('A', 'B', 'AF', 'T') if f'pool_{lbl}' in synth25_data]
+    pool_families = [lbl for lbl in ('A', 'F', 'AF', 'T') if f'pool_{lbl}' in synth25_data]
     synth25_pools = {
         pool_name: {
-            'alpha0': synth25_data['pool_alpha0'][pool_name],
+            'beta_0': synth25_data['pool_beta_0'][pool_name],
             **{lbl: synth25_data[f'pool_{lbl}'][pool_name] for lbl in pool_families},
         }
         for pool_name in synth25_data['pool_names']
     }
-    synth25_metric_label = synth25_metametric_name.upper()
-    print(f'Loaded {synth25_path}: {synth25_metric_label} pools ({synth25_data["n_donors"]} donors):', file=sys.stderr)
+    synth25_metametric_label = synth25_metametric_name.upper()
+    print(f'Loaded {synth25_path}: {synth25_metametric_label} pools ({synth25_data["n_base_scorers"]} base_scorers):', file=sys.stderr)
     for pool_name, info in synth25_pools.items():
       fields = ' '.join(f'{lbl}={info[lbl]:.4f}' for lbl in pool_families)
-      print(f'  {pool_name}: alpha_0={info["alpha0"]:.4f} {fields}', file=sys.stderr)
+      print(f'  {pool_name}: beta_0={info["beta_0"]:.4f} {fields}', file=sys.stderr)
 
     # This cache's own third family is J (not T) -- e.g. compute_scorer_
-    # orientation_vs_alpha.py's --green-family Jneg/DiagTJ, which keeps
-    # AF/A-B (and, for DiagTJ, T) from some other --synthesis but ALSO
-    # builds J from an offset call. mwb.lib.synth25_orientation never
-    # computes J alongside AF/A/B/T in the SAME call (see its module
+    # preference_vs_beta.py's --family-set Jneg/AFTJ, which keeps
+    # AF/A-F (and, for AFTJ, T) from some other --synthesis but ALSO
+    # builds J from an offset call. mwb.lib.synth25_preference never
+    # computes J alongside AF/A/F/T in the SAME call (see its module
     # docstring), so it lives in a SEPARATE cache (pools_tag_J, tagged
     # 'neg' or 'symmetric' depending on which dial grid J itself used --
     # 'symmetric' when this cache's OWN dial_preset is 'symmetric' i.e. a
-    # DiagTJ cache, 'neg'/historical NEG_J_DIAL_GRID otherwise, e.g. plain
+    # AFTJ cache, 'neg'/historical NEG_J_DIAL_GRID otherwise, e.g. plain
     # Jneg) -- merge its 'J' value into each pool's dict alongside the
-    # AF/A-B/T already loaded above, rather than trying to load ONE cache
+    # AF/A-F/T already loaded above, rather than trying to load ONE cache
     # with everything.
     if data.get('J') is not None:
       j_dial_preset = 'symmetric' if data['dial_preset'] == 'symmetric' else 'neg'
       synth25_j_tag = synth25_pools_tag_J(data['dataset'], synth25_metametric_name, dial_preset=j_dial_preset)
-      synth25_j_path = os.path.join(DATA_DIR, f'synth25_orientation_{synth25_j_tag}.npz')
+      synth25_j_path = os.path.join(DATA_DIR, f'synth25_preference_{synth25_j_tag}.npz')
       if not os.path.exists(synth25_j_path):
         dial_preset_hint = ' --dial-preset symmetric' if j_dial_preset == 'symmetric' else ''
-        sys.exit(f'{synth25_j_path} not found -- run compute_synth25_orientation.py --dataset '
+        sys.exit(f'{synth25_j_path} not found -- run compute_synth25_preference.py --dataset '
                   f'{data["dataset"]} --metametric {args.metametric} --J{dial_preset_hint} --all-pools first')
       synth25_j_data = load_synth25_pools_J(synth25_j_path)
       for pool_name in synth25_j_data['pool_names']:
         if pool_name in synth25_pools:
           synth25_pools[pool_name]['J'] = synth25_j_data['pool_J'][pool_name]
-      print(f'Loaded {synth25_j_path}: J pools ({synth25_j_data["n_donors"]} donors):', file=sys.stderr)
+      print(f'Loaded {synth25_j_path}: J pools ({synth25_j_data["n_base_scorers"]} base_scorers):', file=sys.stderr)
       for pool_name in synth25_j_data['pool_names']:
         print(f'  {pool_name}: J={synth25_j_data["pool_J"][pool_name]:.4f}', file=sys.stderr)
 
   loo_points = None
   if args.overlay_loo:
     loo_tag = f'{base}_loo' + ('' if args.metametric == 'spa' else f'_{args.metametric}')
-    loo_path = os.path.join(DATA_DIR, f'scorer_orientation_{loo_tag}.npz')
+    loo_path = os.path.join(DATA_DIR, f'preference_vs_beta_{loo_tag}.npz')
     if not os.path.exists(loo_path):
-      sys.exit(f'{loo_path} not found -- run compute_scorer_orientation_leave_one_out.py --dataset {base} '
+      sys.exit(f'{loo_path} not found -- run compute_scorer_preference_leave_one_out.py --dataset {base} '
                 f'--metametric {args.metametric} first')
     loo_npz = np.load(loo_path)
     loo_points = {
         'dropped_systems': [str(s) for s in loo_npz['dropped_systems']],
-        'alpha0': loo_npz['alpha0'],
-        'A': loo_npz['A'], 'B': loo_npz['B'], 'T': loo_npz['T'], 'J': loo_npz['J'],
+        'beta_0': loo_npz['beta_0'],
+        'A': loo_npz['A'], 'F': loo_npz['F'], 'T': loo_npz['T'], 'J': loo_npz['J'],
     }
     print(f'Loaded {loo_path}: {len(loo_points["dropped_systems"])} leave-one-out subsets', file=sys.stderr)
 
@@ -871,46 +871,47 @@ if __name__ == '__main__':
   cutoff_frac = _ESS_CUTOFF_ABS / K
   norm = SplineReliabilityNorm(vmin=cutoff_frac, vmax=1.0)
 
-  # --beta-axis: every alpha-valued quantity that ends up as an x-position
-  # gets re-parameterized here, once, in place -- mwb.lib.alpha.alpha_to_beta is
-  # monotonically increasing, so ess_over_k/mean_curves/shadow_curves (all
-  # still indexed by the ORIGINAL alphas array's position) stay correctly
-  # aligned with plot_alphas without re-sorting anything.
-  plot_alphas = data['alphas']
-  plot_center_alpha = data['center_alpha']
-  plot_xlabel = 'β' if args.poster else 'alpha (meta-evaluation balance)'
-  plot_ylabel = 'Preference' if args.poster else 'orientation score'
-  if args.beta_axis:
-    plot_alphas = alpha_to_beta(plot_alphas)
-    plot_center_alpha = float(alpha_to_beta(plot_center_alpha))
-    plot_xlabel = 'β' if args.poster else 'beta = 1 / (1 + sqrt(1/alpha - 1))'
+  # --beta-std-axis: every beta-valued quantity that ends up as an
+  # x-position gets re-parameterized here, once, in place --
+  # mwb.lib.beta.beta_to_beta_std is monotonically increasing, so
+  # ess_over_k/mean_curves/shadow_curves (all still indexed by the
+  # ORIGINAL betas array's position) stay correctly aligned with
+  # plot_betas without re-sorting anything.
+  plot_betas = data['betas']
+  plot_center_beta = data['center_beta']
+  plot_xlabel = 'β' if args.poster else 'beta (meta-evaluation balance)'
+  plot_ylabel = 'Preference' if args.poster else 'preference score'
+  if args.beta_std_axis:
+    plot_betas = beta_to_beta_std(plot_betas)
+    plot_center_beta = float(beta_to_beta_std(plot_center_beta))
+    plot_xlabel = 'β' if args.poster else 'beta_std = 1 / (1 + sqrt(1/beta - 1))'
     if synth25_pools:
       for info in synth25_pools.values():
-        a0 = info.get('alpha0')
-        if a0 is not None and a0 == a0:  # excludes NaN
-          info['alpha0'] = float(alpha_to_beta(a0))
+        beta0 = info.get('beta_0')
+        if beta0 is not None and beta0 == beta0:  # excludes NaN
+          info['beta_0'] = float(beta_to_beta_std(beta0))
     if loo_points:
-      loo_points['alpha0'] = alpha_to_beta(loo_points['alpha0'])
+      loo_points['beta_0'] = beta_to_beta_std(loo_points['beta_0'])
 
   # First family/families: either the paper's committed AF (single-dial
-  # Adequacy-fluency preference, --green-family DiagTJ) or the separate
-  # single-aspect A/B pair (the footnoted, excluded construction) --
+  # Adequacy-fluency preference, --family-set AFTJ) or the separate
+  # single-aspect A/F pair (the footnoted, excluded construction) --
   # whichever this cache actually has, never both. Then the third/fourth
-  # families: 'T' (orientation-neutral All-MQM) and/or 'J' (orientation-
+  # families: 'T' (preference-neutral All-MQM) and/or 'J' (preference-
   # neutral Joint) -- whichever are present. Most caches have at most one
   # of T/J (additive/additive_mean's own T, or offset's own J /
-  # --green-family Jneg's swapped-in J); --green-family DiagTJ caches have
+  # --family-set Jneg's swapped-in J); --family-set AFTJ caches have
   # BOTH at once, so this is not an either/or.
-  families = ['AF'] if data.get('AF') is not None else ['A', 'B']
+  families = ['AF'] if data.get('AF') is not None else ['A', 'F']
   if data.get('T') is not None:
     families.append('T')
   if data.get('J') is not None:
     families.append('J')
   families = tuple(families)
   # Built for every possible family (not just `families`): the
-  # --overlay-synth25 pool markers report whichever of AF/T or A/B/T
-  # mwb.lib.synth25_orientation computed (matching this cache's own AF-vs-
-  # A/B choice; it never computes J), so an 'offset' cache (whose OWN third
+  # --overlay-synth25 pool markers report whichever of AF/T or A/F/T
+  # mwb.lib.synth25_preference computed (matching this cache's own AF-vs-
+  # A/F choice; it never computes J), so an 'offset' cache (whose OWN third
   # family is J) still needs a 'T' cmap available to draw its T-family pool
   # markers alongside J's dots.
   # --poster: dots/legend/pool markers get the BRIGHT color (POSTER_DARK_
@@ -921,82 +922,82 @@ if __name__ == '__main__':
   # two different intensities of the same family color, not two shades
   # that happen to differ by ESS alone.
   base_colors = _POSTER_DARK_COLOR if args.poster else _DARK_COLOR
-  _ALL_FAMILIES = ('A', 'B', 'AF', 'T', 'J')
+  _ALL_FAMILIES = ('A', 'F', 'AF', 'T', 'J')
   family_colors = {label: (_lighten(base_colors[label], amount=0.35) if args.poster else base_colors[label])
                     for label in _ALL_FAMILIES}
   cmaps = {label: _ess_over_k_cmap(family_colors[label]) for label in _ALL_FAMILIES}
   line_cmaps = {label: _ess_over_k_cmap(base_colors[label]) for label in _ALL_FAMILIES}
 
-  if args.aspect_donors:
-    # One square panel per ASPECT_DONORS entry (fixed order, not
-    # data['donors']'s alphabetical one), each showing that donor's OWN
-    # family curves -- unlike the mean-across-donors default, there's only
-    # one "donor" per panel here, so no averaging.
-    donor_row = {d: i for i, d in enumerate(data['donors'])}
-    fig, axes = plt.subplots(1, len(ASPECT_DONORS), figsize=(12 * len(ASPECT_DONORS), 10))
-    for ax, donor in zip(axes, ASPECT_DONORS):
+  if args.aspect_base_scorers:
+    # One square panel per ASPECT_BASE_SCORERS entry (fixed order, not
+    # data['base scorers']'s alphabetical one), each showing that base scorer's OWN
+    # family curves -- unlike the mean-across-base scorers default, there's only
+    # one "base scorer" per panel here, so no averaging.
+    base_scorer_row = {d: i for i, d in enumerate(data['base_scorers'])}
+    fig, axes = plt.subplots(1, len(ASPECT_BASE_SCORERS), figsize=(12 * len(ASPECT_BASE_SCORERS), 10))
+    for ax, base_scorer in zip(axes, ASPECT_BASE_SCORERS):
       ax.set_box_aspect(1)
-      curves = {label: data[label][donor_row[donor]] for label in families}
-      _draw_orientation_axes(ax, plot_alphas, curves, ess_over_k, cmaps, norm, plot_center_alpha,
+      curves = {label: data[label][base_scorer_row[base_scorer]] for label in families}
+      _draw_preference_axes(ax, plot_betas, curves, ess_over_k, cmaps, norm, plot_center_beta,
                               families=families, xlabel=plot_xlabel)
-      ax.set_title(donor, fontsize=10)
+      ax.set_title(base_scorer, fontsize=10)
     strip_ax = axes[-1]
-    donor_desc = '/'.join(ASPECT_DONORS)
-  elif args.per_donor:
-    # One square panel per donor already in this cache -- a grid, since a
-    # real_scorers-screened cache typically has dozens of donors (unlike
-    # --aspect-donors' fixed 3), sized to roughly a square layout with any
+    base_scorer_desc = '/'.join(ASPECT_BASE_SCORERS)
+  elif args.per_base_scorer:
+    # One square panel per base scorer already in this cache -- a grid, since a
+    # real_scorers-screened cache typically has dozens of base scorers (unlike
+    # --aspect-base-scorers' fixed 3), sized to roughly a square layout with any
     # leftover trailing slots hidden.
-    donor_order = data['donors']
-    n = len(donor_order)
+    base_scorer_order = data['base_scorers']
+    n = len(base_scorer_order)
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(12 * cols, 10 * rows))
     axes_flat = np.atleast_1d(axes).ravel()
-    for idx, donor in enumerate(donor_order):
+    for idx, base_scorer in enumerate(base_scorer_order):
       ax = axes_flat[idx]
       ax.set_box_aspect(1)
       curves = {label: data[label][idx] for label in families}
-      _draw_orientation_axes(ax, plot_alphas, curves, ess_over_k, cmaps, norm, plot_center_alpha,
+      _draw_preference_axes(ax, plot_betas, curves, ess_over_k, cmaps, norm, plot_center_beta,
                               families=families, xlabel=plot_xlabel)
-      ax.set_title(donor, fontsize=7)
+      ax.set_title(base_scorer, fontsize=7)
     for ax in axes_flat[n:]:
       ax.axis('off')
     strip_ax = axes_flat[n - 1]
-    donor_desc = f'{n} donors (no averaging)'
+    base_scorer_desc = f'{n} base_scorers (no averaging)'
   else:
-    # data['A']/data['B']/data['T'] are (n_donors, n_alpha) -- per-donor
-    # shadow curves, drawn behind the mean when --shadow-donors is on (see
-    # _draw_orientation_axes's shadow_curves param), no recomputation
+    # data['A']/data['F']/data['T'] are (n_base_scorers, n_beta) -- per-base scorer
+    # shadow curves, drawn behind the mean when --shadow-base-scorers is on (see
+    # _draw_preference_axes's shadow_curves param), no recomputation
     # needed since they're already sitting in the cache.
     mean_curves = {label: np.nanmean(data[label], axis=0) for label in families}
-    shadow_curves = {label: data[label] for label in families} if args.shadow_donors else None
+    shadow_curves = {label: data[label] for label in families} if args.shadow_base_scorers else None
     fig, ax = plt.subplots(figsize=(13, 10) if args.poster else (12, 10))
     ax.set_box_aspect(1)  # square PLOT box -- independent of the title/colorbar space around it
-    _draw_orientation_axes(ax, plot_alphas, mean_curves, ess_over_k, cmaps, norm, plot_center_alpha,
+    _draw_preference_axes(ax, plot_betas, mean_curves, ess_over_k, cmaps, norm, plot_center_beta,
                             families=families, synth25_pools=synth25_pools,
-                            synth25_metric_label=synth25_metric_label, loo_points=loo_points,
+                            synth25_metametric_label=synth25_metametric_label, loo_points=loo_points,
                             shadow_curves=shadow_curves, xlabel=plot_xlabel, ylabel=plot_ylabel,
                             poster=args.poster, line_cmaps=line_cmaps, legend=args.legend)
     strip_ax = ax
-    donor_desc = f'{len(data["donors"])} donors'
+    base_scorer_desc = f'{len(data["base_scorers"])} base_scorers'
 
   synthesis_title = '' if data['synthesis'] == 'offset' else f', synthesis={data["synthesis"]}'
   dial_preset_title = '' if data['dial_preset'] == 'linear' else f', dial_preset={data["dial_preset"]}'
-  center_label = 'beta_0(D)' if args.beta_axis else 'alpha_0(D)'
-  axis_title = ' vs. beta' if args.beta_axis else ' vs. alpha'
+  center_label = 'beta_std_0(D)' if args.beta_std_axis else 'beta_0(D)'
+  axis_title = ' vs. beta_std' if args.beta_std_axis else ' vs. beta'
   if not args.poster:
-    fig.suptitle(f'{data["dataset"]}: scorer orientation{axis_title} ({data["metametric"].upper()}, '
-                 f'K={K} systems, {donor_desc}, '
-                 f'{center_label}={plot_center_alpha:.4f}{synthesis_title}{dial_preset_title})', fontsize=11)
+    fig.suptitle(f'{data["dataset"]}: scorer preference{axis_title} ({data["metametric"].upper()}, '
+                 f'K={K} systems, {base_scorer_desc}, '
+                 f'{center_label}={plot_center_beta:.4f}{synthesis_title}{dial_preset_title})', fontsize=11)
   fig.tight_layout(rect=[0, 0, 0.85, 1.0] if args.poster else [0, 0, 0.85, 0.95])
 
   # Strips are added AFTER tight_layout, positioned off strip_ax's FINAL
-  # bbox (the single axes, or the rightmost panel in the --aspect-donors
-  # case, since ESS(alpha) is shared across every panel) -- adding them
+  # bbox (the single axes, or the rightmost panel in the --aspect-base-scorers
+  # case, since ESS(beta) is shared across every panel) -- adding them
   # before would have tight_layout shove the panel around without the
   # strips following. One strip per active family, flush side by side
-  # (each offset = previous + strip width, no gap): A (blue), B (red),
+  # (each offset = previous + strip width, no gap): A (blue), F (red),
   # then T or J (green) if present -- only the last one gets the axis label.
   _STRIP_WIDTH = 0.012
   for i, label in enumerate(families):
@@ -1009,22 +1010,22 @@ if __name__ == '__main__':
   synthesis_suffix = '' if data['synthesis'] == 'offset' else f'_{data["synthesis"]}'
   dial_preset_suffix = {'linear': '', 'geometric': '_geom', 'extended': '_ext', 'symmetric': '_sym'}[data['dial_preset']]
   # This cache's third family is J even though data['synthesis'] != 'offset'
-  # (compute_scorer_orientation_vs_alpha.py --green-family Jneg) -- WITHOUT
+  # (compute_scorer_preference_vs_beta.py --family-set Jneg) -- WITHOUT
   # this, the filename would be identical to the plain synthesis-only
   # (T-family) cache's own plot and silently overwrite it (confirmed
   # empirically -- caught and fixed here).
-  green_family_suffix = '_Jneg' if (data.get('J') is not None and data['synthesis'] != 'offset') else ''
+  family_set_suffix = '_Jneg' if (data.get('J') is not None and data['synthesis'] != 'offset') else ''
   grid_suffix = '_union' if args.union_grid else ''
-  aspectdonors_suffix = '_aspectdonors' if args.aspect_donors else ('_perdonor' if args.per_donor else '')
+  aspect_base_scorers_suffix = '_aspect_base_scorers' if args.aspect_base_scorers else ('_per_base_scorer' if args.per_base_scorer else '')
   synth25_suffix = '_synth25' if args.overlay_synth25 else ''
   loo_suffix = '_loo' if args.overlay_loo else ''
-  beta_suffix = '_beta' if args.beta_axis else ''
+  beta_std_suffix = '_beta_std' if args.beta_std_axis else ''
   if data.get('T') is not None and data.get('J') is not None:
-    # --green-family DiagTJ cache (AF, T, and J at once) -- short, distinct
+    # --family-set AFTJ cache (AF, T, and J at once) -- short, distinct
     # name instead of the long auto-chain above (which was designed around
     # exactly one of T/J ever being present at a time, and is already long
-    # enough without a 5th thing to disambiguate). Matches the paper's own
-    # figure filenames exactly, e.g. orientation__ende21_DiagTJ_synth25.pdf
+    # enough without a 5th thing to disambiguate). Mirrors the paper's own
+    # figure-filename structure (e.g. preference__ende21_AFTJ_synth25.pdf)
     # -- including the double underscore and the metametric prefix
     # ("pearson_" for the appendix's Pearson variant, nothing for the
     # default spa) and the "_nolegend" suffix (--no-legend, for the
@@ -1033,13 +1034,13 @@ if __name__ == '__main__':
     metametric_prefix = '' if data['metametric'] == 'spa' else f'{data["metametric"]}_'
     plot_path = os.path.join(
         ARTIFACTS_DIR,
-        f'orientation__{metametric_prefix}{base}_DiagTJ{aspectdonors_suffix}{synth25_suffix}{loo_suffix}'
-        f'{beta_suffix}{nolegend_suffix}.{args.format}')
+        f'preference__{metametric_prefix}{base}_AFTJ{aspect_base_scorers_suffix}{synth25_suffix}{loo_suffix}'
+        f'{beta_std_suffix}{nolegend_suffix}.{args.format}')
   else:
     plot_path = os.path.join(
         ARTIFACTS_DIR,
-        f'orientation_vs_alpha_{base}{grid_suffix}{metametric_suffix}{synthesis_suffix}{dial_preset_suffix}'
-        f'{green_family_suffix}{aspectdonors_suffix}{synth25_suffix}{loo_suffix}{beta_suffix}.{args.format}')
+        f'preference_vs_beta_{base}{grid_suffix}{metametric_suffix}{synthesis_suffix}{dial_preset_suffix}'
+        f'{family_set_suffix}{aspect_base_scorers_suffix}{synth25_suffix}{loo_suffix}{beta_std_suffix}.{args.format}')
   # bbox_inches='tight' does NOT reliably auto-detect every legend on its
   # own -- confirmed empirically: the dot/pool/loo legends (all attached
   # via ax.add_artist, positioned via negative-fraction bbox_to_anchor
@@ -1053,13 +1054,13 @@ if __name__ == '__main__':
   print(f'Wrote {plot_path}', file=sys.stderr)
 
   # Second family of figures: each of AF (Adequacy-fluency preference) or
-  # A/B (adequacy, fluency) -- whichever this cache has -- and the cache's
-  # third family (T=AllMQM or J=Joint) plotted directly against ESS(alpha)/K
+  # A/F (adequacy, fluency) -- whichever this cache has -- and the cache's
+  # third family (T=AllMQM or J=Joint) plotted directly against ESS(beta)/K
   # -- see _plot_family_vs_ess's docstring for the full rationale.
   # _plot_family_vs_ess no-ops for whichever family is absent. Opt-in only
   # (--vs-ess) -- no longer a mandatory side effect of every run.
   if args.vs_ess:
-    for family in ('A', 'B', 'AF', 'T', 'J'):
-      _plot_family_vs_ess(data, family, K, donor_desc, synthesis_title, dial_preset_title, ARTIFACTS_DIR,
+    for family in ('A', 'F', 'AF', 'T', 'J'):
+      _plot_family_vs_ess(data, family, K, base_scorer_desc, synthesis_title, dial_preset_title, ARTIFACTS_DIR,
                            base, grid_suffix, metametric_suffix, synthesis_suffix, dial_preset_suffix,
-                           aspectdonors_suffix, green_family_suffix)
+                           aspect_base_scorers_suffix, family_set_suffix)

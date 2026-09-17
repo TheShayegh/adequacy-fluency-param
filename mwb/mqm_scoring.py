@@ -49,7 +49,7 @@ per row, since the raw data mixes two MQM taxonomies across years/pairs:
     covered by either paper are classified by analogy (documented inline
     at _FLAT_ADEQUACY / _FLAT_FLUENCY).
 
-The "Other" bucket (excluded from both a and b, per the All MQM = Adequacy
+The "Other" bucket (excluded from both a and f, per the All MQM = Adequacy
 MQM + Fluency MQM simplification) is: "Other", "No-error", and the
 HOTW-test QC-probe categories ("Found"/"Missed"). Note "Source issue"/
 "Source error" fall here too, but via error_weight's zero-weight override
@@ -195,8 +195,8 @@ def parse_mqm_tsv(path: str) -> pd.DataFrame:
   # accumulate weighted error sums per (system, doc, doc_id, seg_id, rater)
   acc = defaultdict(lambda: {'adequacy': 0.0, 'fluency': 0.0, 'full': 0.0})
   all_keys = set()
-  with open(path, newline='') as f:
-    reader = csv.DictReader(f, delimiter='\t', quoting=csv.QUOTE_NONE)
+  with open(path, newline='') as fh:
+    reader = csv.DictReader(fh, delimiter='\t', quoting=csv.QUOTE_NONE)
     fieldnames = reader.fieldnames
     doc_id_col = _doc_id_col(fieldnames)
     seg_id_col = _seg_id_col(fieldnames)
@@ -300,7 +300,7 @@ def per_segment_scores(seg_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def system_level_scores(seg_df: pd.DataFrame) -> pd.DataFrame:
-  """Collapses a per-(system,doc,seg,rater) DataFrame to per-system a,b,t.
+  """Collapses a per-(system,doc,seg,rater) DataFrame to per-system a,f,t.
 
   Averages across raters within a segment first, applies the modal-coverage
   filter, then averages across segments within a system (uniform weight per
@@ -311,7 +311,7 @@ def system_level_scores(seg_df: pd.DataFrame) -> pd.DataFrame:
   per_system = (
       per_segment.groupby('system')[cols]
       .mean()
-      .rename(columns={'adequacy': 'a', 'fluency': 'b', 'all_mqm': 't'})
+      .rename(columns={'adequacy': 'a', 'fluency': 'f', 'all_mqm': 't'})
   )
   n_segments = per_segment.groupby('system').size().rename('n_segments')
   return per_system.join(n_segments)
@@ -421,8 +421,8 @@ def load_official_ratings(rating_paths: list[str], n_positions: int) -> pd.DataF
   records = []
   for round_idx, path in enumerate(rating_paths):
     sys_lines = defaultdict(list)
-    with open(path) as f:
-      for line in f:
+    with open(path) as fh:
+      for line in fh:
         parts = line.rstrip('\n').split('\t')
         sys_lines[_normalize_system_name(parts[0])].append(parts[1] if len(parts) > 1 else 'None')
     for sysname, lines in sys_lines.items():
@@ -431,7 +431,7 @@ def load_official_ratings(rating_paths: list[str], n_positions: int) -> pd.DataF
       for pos, errors_json in enumerate(lines):
         if errors_json in ('None', 'null', ''):
           continue
-        a_sum = b_sum = full_sum = 0.0
+        a_sum = f_sum = full_sum = 0.0
         for e in json.loads(errors_json).get('errors', []):
           aspect = classify_aspect(e['category'])
           score = e.get('score') or 0.0
@@ -439,10 +439,10 @@ def load_official_ratings(rating_paths: list[str], n_positions: int) -> pd.DataF
           if aspect == 'adequacy':
             a_sum += score
           elif aspect == 'fluency':
-            b_sum += score
+            f_sum += score
         records.append({
             'system': sysname, 'doc': 'pos', 'doc_id': '0', 'seg_id': str(pos),
-            'rater': f'round{round_idx}', 'adequacy': -a_sum, 'fluency': -b_sum,
+            'rater': f'round{round_idx}', 'adequacy': -a_sum, 'fluency': -f_sum,
             'full': -full_sum,
         })
   df = pd.DataFrame.from_records(records)
@@ -451,8 +451,8 @@ def load_official_ratings(rating_paths: list[str], n_positions: int) -> pd.DataF
 
 
 def _count_lines(path: str) -> int:
-  with open(path) as f:
-    return sum(1 for _ in f)
+  with open(path) as fh:
+    return sum(1 for _ in fh)
 
 
 # All 15 system-sets this project covers. generalMT2022/enzh is excluded:
@@ -485,7 +485,7 @@ def _load_seg_df(set_name: str, root: str = '.') -> pd.DataFrame:
 
   Cached (this is the expensive parse -- raw-TSV sets go through parse_mqm_
   tsv's per-row weighting/classification, official-ratings sets through
-  load_official_ratings's per-row rating merge): profiling a single 21-alpha
+  load_official_ratings's per-row rating merge): profiling a single 21-beta
   curve over just 2 datasets found this step re-invoked 8 times for the same
   (set_name, root) pairs (real_systems/load_system_scores have no caching of
   their own and are each called independently by multiple call sites --

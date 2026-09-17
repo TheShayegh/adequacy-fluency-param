@@ -2,7 +2,7 @@
 module docstring for what (P) is. Unlike that module (closed-form
 KKT/support-enumeration derivation), this one uses NO structure at all: it
 lays down every point of a uniform lattice on the whole weight simplex,
-checks each one directly against alpha(w) == target (within `tol`, since a
+checks each one directly against beta(w) == target (within `tol`, since a
 discrete lattice will essentially never land on an equality constraint
 exactly), and keeps the minimum-objective (= max-ESS) survivor by plain
 comparison.
@@ -13,13 +13,13 @@ equation, curvature certificate, live-pole handling) that is easy to get
 subtly wrong in a way its own outputs wouldn't reveal. This module is the
 opposite trade: no derivation to get wrong, at the cost of being useless at
 real problem sizes. It's a trust anchor for validating mwb.lib.reweight_exact
-against small, hand-picked or synthetic (a, b, alpha) instances -- e.g.
+against small, hand-picked or synthetic (a, f, beta) instances -- e.g.
 tests/test_reweight_exact.py's K=4 non-global-KKT-point example, or a
 shrunk-down version of a real dataset -- not a drop-in for it. (Historical
 motivation: this project used to also have a NUMERIC solver, a multi-start
 local optimizer; run with only 30 restarts, it was found to land on a local
 optimum -- ESS 4.28 instead of the reachable 7.37 -- for one of jazh24's
-leave-one-system-out subsets near alpha~1. That module was retired after
+leave-one-system-out subsets near beta~1. That module was retired after
 broader cross-validation confirmed this wasn't an isolated case (13/15
 real-data test cases underperformed mwb.lib.reweight_exact's certified
 optimum at default settings); mwb.lib.reweight_exact replaced it as the
@@ -42,7 +42,7 @@ with the final candidate count). This was cross-validated extensively
 against that itertools-based version before it was retired: identical
 point-set coverage for small (K, grid_n) by direct enumeration, identical
 answers (ESS, feasibility) across real WMT datasets spanning K=7-17 at a
-variety of alpha targets and grid_n, and a fine-grained 21-point alpha
+variety of beta targets and grid_n, and a fine-grained 21-point beta
 sweep at K=4 -- 0 mismatches across every comparison run.
 
 Generation runs on CPU UNCONDITIONALLY, regardless of `device` -- measured
@@ -52,7 +52,7 @@ vs 0.09s for one call over 17M values against a length-200 table) --
 apparently a poorly-optimized MPS kernel path in this torch version, not a
 subtlety of this problem. Sending generation through MPS would make the
 whole pipeline slower, not faster. Only the evaluation step (weighted
-variance / alpha / objective -- large matmuls and reductions, an actually
+variance / beta / objective -- large matmuls and reductions, an actually
 GPU-friendly shape) is dispatched to `device`.
 
 Still fundamentally combinatorial (C(grid_n+K-1, K-1) points -- faster
@@ -89,7 +89,7 @@ import math
 import numpy as np
 import torch
 
-from mwb.lib.alpha import alpha_min_max
+from mwb.lib.beta import beta_min_max
 
 _DEFAULT_GRID_N = 60
 _DEFAULT_TOL = 1e-3
@@ -115,13 +115,13 @@ _SMART_CANDIDATE_THRESHOLD = 2_000_000
 class ExhaustiveWResult:
   """Result of one call to solve_w_exhaustive."""
   w: np.ndarray
-  alpha_target: float
-  alpha_achieved: float
-  gap: float                # |alpha_achieved - alpha_target| -- check this before trusting
-                              # `ess`: near alpha~0 or alpha~1 (see module docstring), alpha(w)
+  beta_target: float
+  beta_achieved: float
+  gap: float                # |beta_achieved - beta_target| -- check this before trusting
+                              # `ess`: near beta~0 or beta~1 (see module docstring), beta(w)
                               # can be steep enough that a gap near `tol` already reaches a much
-                              # easier, higher-ESS point than one actually at alpha_target would.
-  success: bool          # some lattice point satisfied |alpha(w) - target| <= tol
+                              # easier, higher-ESS point than one actually at beta_target would.
+  success: bool          # some lattice point satisfied |beta(w) - target| <= tol
   objective: float        # 1/2 * sum(w^2), the (P) objective
   ess: float               # 1 / sum(w^2)
   grid_n: int
@@ -204,8 +204,8 @@ def _simplex_lattice_chunk(
 
 def solve_w_exhaustive(
     a: np.ndarray,
-    b: np.ndarray,
-    alpha: float,
+    f: np.ndarray,
+    beta: float,
     grid_n: int = _DEFAULT_GRID_N,
     tol: float = _DEFAULT_TOL,
     max_candidates: int = _DEFAULT_MAX_CANDIDATES,
@@ -214,7 +214,7 @@ def solve_w_exhaustive(
 ) -> ExhaustiveWResult:
   """Checks literally every w on the K-dim simplex lattice of resolution
   grid_n (all w_i in {0, 1/grid_n, 2/grid_n, ..., 1} with sum(w)=1) against
-  the balance constraint alpha(w) == alpha (within `tol`), and returns the
+  the balance constraint beta(w) == beta (within `tol`), and returns the
   one with the smallest objective (largest ESS) among those that pass --
   the brute-force answer to (P), no algorithmic insight applied anywhere.
 
@@ -230,15 +230,15 @@ def solve_w_exhaustive(
   force one regardless of problem size.
   """
   a_np = np.asarray(a, dtype=float)
-  b_np = np.asarray(b, dtype=float)
+  f_np = np.asarray(f, dtype=float)
   K = len(a_np)
   if K < 2:
     raise ValueError(f'need at least 2 systems, got {K}')
-  if not (0.0 <= alpha <= 1.0):
-    raise ValueError(f'alpha={alpha} outside [0,1]')
-  amin, amax = alpha_min_max(a_np, b_np)
-  if not (amin - tol <= alpha <= amax + tol):
-    raise ValueError(f'alpha={alpha} outside reachable range [{amin}, {amax}] (Theorem "Reachable range")')
+  if not (0.0 <= beta <= 1.0):
+    raise ValueError(f'beta={beta} outside [0,1]')
+  beta_lo, beta_hi = beta_min_max(a_np, f_np)
+  if not (beta_lo - tol <= beta <= beta_hi + tol):
+    raise ValueError(f'beta={beta} outside reachable range [{beta_lo}, {beta_hi}] (Theorem "Reachable range")')
 
   M = grid_n + K - 1
   n_lattice = math.comb(M, K - 1)
@@ -260,7 +260,7 @@ def solve_w_exhaustive(
   cpu = torch.device('cpu')
   binom_tables = {j: _binom_table(M, j, cpu) for j in range(1, K)}
   a_t = torch.tensor(a_np, dtype=dtype, device=dev)
-  b_t = torch.tensor(b_np, dtype=dtype, device=dev)
+  f_t = torch.tensor(f_np, dtype=dtype, device=dev)
 
   best_obj = None
   best_w = None
@@ -278,13 +278,13 @@ def solve_w_exhaustive(
     # cancellation exactly where it matters most (near-degenerate, low-ESS
     # w), and a "trusted" solver should never trade that away for speed.
     mu_a = w @ a_t
-    mu_b = w @ b_t
+    mu_f = w @ f_t
     var_a = (w * (a_t.unsqueeze(0) - mu_a.unsqueeze(1)) ** 2).sum(dim=1)
-    var_b = (w * (b_t.unsqueeze(0) - mu_b.unsqueeze(1)) ** 2).sum(dim=1)
-    denom = var_a + var_b
+    var_f = (w * (f_t.unsqueeze(0) - mu_f.unsqueeze(1)) ** 2).sum(dim=1)
+    denom = var_a + var_f
     achieved = torch.where(denom > 0, var_a / denom, torch.full_like(denom, float('nan')))
 
-    gap = (achieved - alpha).abs()
+    gap = (achieved - beta).abs()
     feasible = gap <= tol
     n_feasible += int(feasible.sum().item())
     objective = 0.5 * (w ** 2).sum(dim=1)
@@ -313,19 +313,19 @@ def solve_w_exhaustive(
             best_achieved = float(achieved[local_idx].item())
 
   if best_obj is not None:
-    gap = abs(best_achieved - alpha)
+    gap = abs(best_achieved - beta)
     return ExhaustiveWResult(
-        w=best_w, alpha_target=alpha, alpha_achieved=best_achieved, gap=gap,
+        w=best_w, beta_target=beta, beta_achieved=best_achieved, gap=gap,
         success=True, objective=best_obj, ess=1.0 / (2.0 * best_obj),
         grid_n=grid_n, tol=tol, n_candidates=n_lattice, n_feasible=n_feasible,
-        message=f'best of {n_feasible} lattice points within tol={tol} of alpha={alpha} '
+        message=f'best of {n_feasible} lattice points within tol={tol} of beta={beta} '
                 f'(actual gap {gap:.3g}, device={dev.type})',
     )
-  gap = abs(best_achieved - alpha) if best_achieved is not None else float('nan')
+  gap = abs(best_achieved - beta) if best_achieved is not None else float('nan')
   return ExhaustiveWResult(
-      w=best_w, alpha_target=alpha, alpha_achieved=best_achieved, gap=gap,
+      w=best_w, beta_target=beta, beta_achieved=best_achieved, gap=gap,
       success=False, objective=float('nan'), ess=float('nan'),
       grid_n=grid_n, tol=tol, n_candidates=n_lattice, n_feasible=0,
-      message=(f'no lattice point within tol={tol} of alpha={alpha} '
+      message=(f'no lattice point within tol={tol} of beta={beta} '
                f'(closest miss off by {best_gap:.3g}, device={dev.type}) -- raise grid_n or tol'),
   )

@@ -2,12 +2,12 @@
 "COMET-DA_2021-refA.sys.score", "MetricX-23-QE-b-src.seg.score".
 
 The basename (minus the .sys.score/.seg.score suffix) is
-"<metric-name>-<reference-variant>", where the reference variant is one of
-a small closed vocabulary: which reference the metric was run against
+"<scorer-name>-<reference-variant>", where the reference variant is one of
+a small closed vocabulary: which reference the scorer was run against
 (refA/refB/refC/refD for wmt21+, ref/refb/refp/all for wmt20), or "src" for
-a reference-free (QE) metric, or "synthetic_ref" (wmt23's paraphrased
+a reference-free (QE) scorer, or "synthetic_ref" (wmt23's paraphrased
 reference). Stripping that trailing token is the only *safe* normalization:
-metric names themselves are not otherwise standardized across years (e.g.
+scorer names themselves are not otherwise standardized across years (e.g.
 COMET-2R'20 / COMET-DA_2021 / COMET-20 / bare COMET'23 / COMET-22'24 are
 four distinct scored variants of an evolving model family, not the same
 file under a different name) -- so this module does not attempt to unify
@@ -24,11 +24,11 @@ _VARIANT_SUFFIXES = (
 
 
 def split_variant(basename: str) -> tuple[str, str | None]:
-  """Splits "<metric>-<variant>" into (metric, variant). variant is None if
+  """Splits "<scorer>-<variant>" into (scorer, variant). variant is None if
   the trailing '-'-delimited token isn't in the known vocabulary (rare;
-  such names are returned whole as the metric with variant=None)."""
+  such names are returned whole as the scorer with variant=None)."""
   if '-' in basename:
-    metric, _, tail = basename.rpartition('-')
+    scorer, _, tail = basename.rpartition('-')
     if tail in _VARIANT_SUFFIXES:
-      return metric, tail
+      return scorer, tail
   return basename, None

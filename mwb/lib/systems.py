@@ -1,7 +1,7 @@
 """System-name classification helpers -- e.g. flagging reference/human
-translation entries so system-level analyses (variance, alpha/beta,
+translation entries so system-level analyses (variance, beta,
 synthesis) can restrict to real MT systems, which is what the paper's
-system count K and score vectors a, b range over (translation systems are
+system count K and score vectors a, f range over (translation systems are
 the objects being ranked, not references or human translations)."""
 
 import re

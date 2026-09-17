@@ -14,8 +14,8 @@ Usage: python cli.py <command> [-- SCRIPT_ARGS...]
 Examples:
   python cli.py dataset-stats
   python cli.py af-scatter
-  python cli.py orientation-compute -- --dataset ende21
-  python cli.py orientation-plot -- --dataset ende21 --poster --format pdf
+  python cli.py preference-compute -- --dataset ende21
+  python cli.py preference-plot -- --dataset ende21 --poster --format pdf
   python cli.py beta-ess-heatmap -- --dataset ende21 --grid-n 32
   python cli.py solver-efficiency -- --dataset ende24
 """
@@ -35,20 +35,20 @@ COMMANDS = {
         'Adequacy-vs-fluency scatter for heen23/jazh24.',
         'Figure 1'),
     'spa-plane-synthetic': (
-        'plot_spa_plane_synthetic_diagonal_combo',
+        'plot_spa_plane_synthetic_af_combo',
         'Synthetic scorer families on the SPA plane.',
         'Figure 2'),
-    'orientation-compute': (
-        'compute_scorer_orientation_vs_alpha',
-        'Computes orientation curves vs. alpha for one dataset (run this first).',
+    'preference-compute': (
+        'compute_scorer_preference_vs_beta',
+        'Computes preference curves vs. beta for one dataset (run this first).',
         'Figure 3 data (main results)'),
-    'orientation-synth25': (
-        'compute_synth25_orientation',
+    'preference-synth25': (
+        'compute_synth25_preference',
         "Computes Shayegh et al. (2025)'s system-synthesis baseline markers.",
         'Figure 3 markers (Shayegh et al. 2025 baseline)'),
-    'orientation-plot': (
-        'plot_scorer_orientation_vs_alpha',
-        'Plots the cached orientation curves (run orientation-compute first).',
+    'preference-plot': (
+        'plot_scorer_preference_vs_beta',
+        'Plots the cached preference curves (run preference-compute first).',
         'Figure 3 and its appendix grid'),
     'beta-ess-heatmap': (
         'compute_beta_ess_preference_heatmap',
@@ -58,24 +58,24 @@ COMMANDS = {
         'validate_beta_ess_preference',
         'Cross-checks the beta-ESS heatmap sampler against the exhaustive lattice.',
         'validation for Figure 4'),
-    'spa-vs-alpha-compute': (
-        'compute_spa_vs_alpha',
+    'spa-vs-beta-compute': (
+        'compute_spa_vs_beta',
         'Computes weighted-SPA(beta) curves for a set of scorers.',
         'Figure 5 data'),
-    'spa-vs-alpha-plot': (
-        'plot_spa_vs_alpha_combo',
+    'spa-vs-beta-plot': (
+        'plot_spa_vs_beta_combo',
         'Plots the cached weighted-SPA(beta) curves.',
         'Figure 5'),
     'loo-tau': (
         'compute_loo_tau',
         'Pooled Kendall tau across leave-p-out subsets, per dataset.',
         'Table dataset_tau (Appendix, LOO stability)'),
-    'loo-tau-vs-alpha-compute': (
-        'compute_loo_tau_vs_alpha',
+    'loo-tau-vs-beta-compute': (
+        'compute_loo_tau_vs_beta',
         'Computes pooled LOO tau swept over target beta, for one dataset.',
         'Figure 6 data'),
-    'loo-tau-vs-alpha-plot': (
-        'plot_loo_tau_vs_alpha_combo',
+    'loo-tau-vs-beta-plot': (
+        'plot_loo_tau_vs_beta_combo',
         'Plots the cached LOO-tau-vs-beta curves.',
         'Figure 6'),
     'solver-efficiency': (

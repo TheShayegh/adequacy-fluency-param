@@ -1,13 +1,13 @@
-"""Side-by-side (1 x N) combo of SPA(scorer; alpha) vs. target alpha panels,
-one panel per compute_spa_vs_alpha.py .npz cache -- e.g. the same (dataset,
-substrings, min_ess) sweep at two different --n-alpha resolutions, for a
+"""Side-by-side (1 x N) combo of SPA(scorer; beta) vs. target beta panels,
+one panel per compute_spa_vs_beta.py .npz cache -- e.g. the same (dataset,
+substrings, min_ess) sweep at two different --n-beta resolutions, for a
 direct side-by-side comparison. Style follows plot_spa_plane_synthetic_
 combo.py's two-panel layout (one panel boxed on all four sides), except
 axes are independent (see below) and each panel keeps its OWN legend,
 placed outside its frame -- left panel's legend to its left, right panel's
 legend to its right (own cache's scorers, which need not match the other
 panel's). Purely a plotting script (no solving), so it's cheap to rerun
-while iterating on styling -- see compute_spa_vs_alpha.py for the
+while iterating on styling -- see compute_spa_vs_beta.py for the
 (separately cached) expensive step.
 
 Each panel gets its own independent x/y limits (no sharex/sharey -- axes are
@@ -16,9 +16,9 @@ it appears in (assigned from the union of scorer names across all caches,
 not per-panel), so the panels stay visually comparable despite the
 independent axes.
 
-Usage: python -m mwb.scripts.plot_spa_vs_alpha_combo
-           --caches output/data/spa_vs_alpha_e3a10_n20.npz,output/data/spa_vs_alpha_e3a10_n10.npz
-           [--out output/spa_vs_alpha_combo.pdf]
+Usage: python -m mwb.scripts.plot_spa_vs_beta_combo
+           --caches output/spa_vs_beta_e3a10_n20.npz,output/spa_vs_beta_e3a10_n10.npz
+           [--out output/spa_vs_beta_combo.pdf]
 """
 
 import argparse
@@ -29,7 +29,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from mwb.lib.spa_alpha_sweep import load_spa_vs_alpha, scorer_color_map, scorer_marker_map
+from mwb.lib.spa_beta_sweep import load_spa_vs_beta, scorer_color_map, scorer_marker_map
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 ARTIFACTS_DIR = os.path.join(ROOT, 'output')
@@ -57,25 +57,25 @@ LEGEND_RIGHT_MARGIN = 1.18
 LEGEND_MIDDLE_Y_MARGIN = -0.15  # a middle panel (n > 2 only) has no free side; placed below instead
 
 # Per-panel title; {dataset}/{substrings}/{target_ess}/{K}/{n_points} are
-# filled in from that panel's own cache. X/Y labels and the alpha_0(D)
+# filled in from that panel's own cache. X/Y labels and the beta_0(D)
 # annotation are shared across every panel.
 TITLE_TEMPLATE = '{dataset}: {substrings}\nESS >= {target_ess:.4g} (K={K}), {n_points} points'
 XLABEL = r'$\beta$'
 YLABEL = 'SPA'+r'$_\beta$'
-ALPHA0_ANNOTATION_TEXT = r'$\beta_0$'
+BETA0_ANNOTATION_TEXT = r'$\beta_0$'
 
 
 if __name__ == '__main__':
   p = argparse.ArgumentParser()
   p.add_argument('--caches', type=str, required=True,
-                  help='comma-separated paths to compute_spa_vs_alpha.py .npz caches, one per panel')
+                  help='comma-separated paths to compute_spa_vs_beta.py .npz caches, one per panel')
   p.add_argument('--out', type=str, default=None, help='output path (default: derived from the cache tags)')
   args = p.parse_args()
   cache_paths = [c.strip() for c in args.caches.split(',') if c.strip()]
   if len(cache_paths) < 2:
     sys.exit('--caches needs at least 2 paths for a side-by-side comparison')
 
-  panels = [load_spa_vs_alpha(path) for path in cache_paths]
+  panels = [load_spa_vs_beta(path) for path in cache_paths]
 
   # Color/marker assignment is shared across ALL panels (union of scorer
   # names, in sorted order) so the same scorer always gets the same color
@@ -90,21 +90,21 @@ if __name__ == '__main__':
     axes = [axes]
 
   for panel_i, (ax, d) in enumerate(zip(axes, panels)):
-    x_pad = 0.02 * (max(d['alphas']) - min(d['alphas']) + 1e-9)
+    x_pad = 0.02 * (max(d['betas']) - min(d['betas']) + 1e-9)
     y_pad = 0.02 * (float(d['spa'].max()) - float(d['spa'].min()) + 1e-9)
-    xlim = (min(d['alphas']) - x_pad, max(d['alphas']) + x_pad)
+    xlim = (min(d['betas']) - x_pad, max(d['betas']) + x_pad)
     ylim = (float(d['spa'].min()) - y_pad, float(d['spa'].max()) + y_pad)
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     for i, scorer in enumerate(d['scorers']):
-      ax.plot(d['alphas'], d['spa'][i], color=color_by_scorer[scorer], linewidth=LINE_WIDTH,
+      ax.plot(d['betas'], d['spa'][i], color=color_by_scorer[scorer], linewidth=LINE_WIDTH,
               marker=marker_by_scorer[scorer], markersize=MARKER_SIZE, label=scorer)
-    ax.axvline(d['a0_D'], color='black', alpha=0.3, linewidth=1.0, zorder=1)
-    ax.annotate(ALPHA0_ANNOTATION_TEXT, xy=(d['a0_D'], ylim[1]), xytext=(0, -12),
+    ax.axvline(d['beta_0_D'], color='black', alpha=0.3, linewidth=1.0, zorder=1)
+    ax.annotate(BETA0_ANNOTATION_TEXT, xy=(d['beta_0_D'], ylim[1]), xytext=(0, -12),
                 textcoords='offset points', ha='center', va='top', fontsize=ANNOTATION_FONTSIZE, color='black')
     ax.set_xlabel(XLABEL, fontsize=LABEL_FONTSIZE)
     # ax.set_title(TITLE_TEMPLATE.format(dataset=d['dataset'], substrings=d['substrings'],
-    #                                     target_ess=d['target_ess'], K=d['K'], n_points=len(d['alphas'])),
+    #                                     target_ess=d['target_ess'], K=d['K'], n_points=len(d['betas'])),
                 #  fontsize=TITLE_FONTSIZE)
     ax.tick_params(labelsize=TICK_FONTSIZE)
     for side in ('top', 'right', 'bottom', 'left'):
@@ -141,7 +141,7 @@ if __name__ == '__main__':
   if args.out:
     out_path = args.out
   else:
-    tags = '_'.join(os.path.splitext(os.path.basename(p))[0].replace('spa_vs_alpha_', '') for p in cache_paths)
-    out_path = os.path.join(ARTIFACTS_DIR, f'spa_vs_alpha_combo_{tags}.pdf')
+    tags = '_'.join(os.path.splitext(os.path.basename(p))[0].replace('spa_vs_beta_', '') for p in cache_paths)
+    out_path = os.path.join(ARTIFACTS_DIR, f'spa_vs_beta_combo_{tags}.pdf')
   fig.savefig(out_path, dpi=150, bbox_inches='tight')
   print(f'Wrote {out_path}', file=sys.stderr)

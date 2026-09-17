@@ -1,7 +1,7 @@
 """This is the paper's Figure 1: a two-panel adequacy-vs-fluency scatter for
 (heen23, jazh24) side by side, shared x/y ranges and a single shared y-axis
 (drawn once, on the left), each panel boxed on all four sides. Unlabeled
-markers (no per-system names) -- just the (a,b) point cloud against the
+markers (no per-system names) -- just the (a,f) point cloud against the
 GK-robust Mahalanobis-distance ellipses.
 
 Usage: python -m mwb.scripts.plot_af_scatter_heen23_jazh24
@@ -21,7 +21,7 @@ from mwb.lib.outlier_detection import gk_robust_loc_cov
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-ARTIFACTS_DIR = os.path.join(ROOT, 'output', 'outliers')
+ARTIFACTS_DIR = os.path.join(ROOT, 'output')
 
 DATASETS = ['heen23', 'jazh24']
 PANEL_LETTERS = ['a', 'b']
@@ -48,12 +48,12 @@ _GK_CMAP = plt.get_cmap('Greens')
 _GK_COLORS = [_GK_CMAP(z / Z_MAX) for z in Z_LEVELS]
 
 
-def add_gk_ellipses(ax, b, a, alpha=1.0, linewidth=1.6):
+def add_gk_ellipses(ax, f, a, alpha=1.0, linewidth=1.6):
   """Unfilled ellipses at each Z in Z_LEVELS: the boundary where the joint
-  (a,b) Mahalanobis distance from the GK-ROBUST location, under the
+  (a,f) Mahalanobis distance from the GK-ROBUST location, under the
   GK-ROBUST covariance (mwb.lib.outlier_detection.gk_robust_loc_cov), equals
   Z. Returns the legend handles, or [] if the GK fit is degenerate."""
-  out = gk_robust_loc_cov(b, a)
+  out = gk_robust_loc_cov(f, a)
   if out is None:
     return []
   mean, cov = out
@@ -81,26 +81,26 @@ if __name__ == '__main__':
       sys.exit(f'{base}: 0 systems under wmt_official_outliers -- cannot build the combined plot')
     df = load_system_scores(base, root=ROOT)
     a = df.loc[systems, 'a'].values
-    b = df.loc[systems, 'b'].values
-    pool[base] = (systems, b, a)
+    f = df.loc[systems, 'f'].values
+    pool[base] = (systems, f, a)
 
   # Shared x/y ranges: pad the combined extent of BOTH datasets by the same
-  # fraction so a given (a,b) position means the same thing in either panel.
-  all_b = np.concatenate([pool[base][1] for base in DATASETS])
+  # fraction so a given (a,f) position means the same thing in either panel.
+  all_f = np.concatenate([pool[base][1] for base in DATASETS])
   all_a = np.concatenate([pool[base][2] for base in DATASETS])
-  b_pad = 0.25 * (all_b.max() - all_b.min() or 1)
+  f_pad = 0.25 * (all_f.max() - all_f.min() or 1)
   a_pad = 0.25 * (all_a.max() - all_a.min() or 1)
-  xlim = (all_b.min() - b_pad, all_b.max() + b_pad)
+  xlim = (all_f.min() - f_pad, all_f.max() + f_pad)
   ylim = (all_a.min() - a_pad, all_a.max() + a_pad)
 
   fig, axes = plt.subplots(1, 2, figsize=(34, 17), sharex=True, sharey=True)
 
   for ax, base, letter in zip(axes, DATASETS, PANEL_LETTERS):
-    systems, b, a = pool[base]
+    systems, f, a = pool[base]
 
-    gk_handles = add_gk_ellipses(ax, b, a, alpha=ELLIPSE_ALPHA,
+    gk_handles = add_gk_ellipses(ax, f, a, alpha=ELLIPSE_ALPHA,
                                   linewidth=ELLIPSE_LINEWIDTH)
-    ax.scatter(b, a, s=POINT_SIZE, color=POINT_COLOR, alpha=POINT_ALPHA, zorder=3)
+    ax.scatter(f, a, s=POINT_SIZE, color=POINT_COLOR, alpha=POINT_ALPHA, zorder=3)
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
@@ -118,7 +118,7 @@ if __name__ == '__main__':
     for side in ('top', 'right', 'bottom', 'left'):
       ax.spines[side].set_visible(True)
 
-    # heen23's positive a/b correlation leaves its ellipses' major axis
+    # heen23's positive a/f correlation leaves its ellipses' major axis
     # running bottom-left to top-right, so the bottom-right corner of THIS
     # panel stays blank -- put the legend there instead of stealing figure
     # margin.

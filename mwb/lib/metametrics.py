@@ -1,10 +1,10 @@
 """The meta-evaluation metrics ("meta-metrics" in the paper): PA, SPA,
 Pearson, Spearman, Kendall's tau. Each judges a scorer (an automatic MT
-metric) by how well its system-level ranking/scores agree with the human
+scorer) by how well its system-level ranking/scores agree with the human
 (All MQM) ranking/scores. Higher = better agreement, for all five (in
 particular, mt-metrics-eval-v2's metric-score files are already oriented so
-"higher = better translation" for every metric, error metrics included --
-e.g. TER is stored negated -- so no per-metric sign-flipping is needed; our
+"higher = better translation" for every scorer, error metrics included --
+e.g. TER is stored negated -- so no per-scorer sign-flipping is needed; our
 own All MQM scores follow the same convention, see mqm_scoring.py).
 
 SPA (soft pairwise accuracy, Thompson et al. 2024; PairwiseConfidenceError
@@ -12,7 +12,7 @@ SPA (soft pairwise accuracy, Thompson et al. 2024; PairwiseConfidenceError
 external/mt-metrics-eval/mt_metrics_eval/pce.py -- not imported, since that
 package isn't installed here (Python version gate, see mqm_scoring.py's
 docstring for the same situation with score_mqm.py). It needs segment-level
-scores (both human and metric), unlike the other four which only need the
+scores (both human and scorer), unlike the other four which only need the
 system-level vectors.
 
 WEIGHTED variants (weighted_pearson, ..., WEIGHTED_METAMETRICS) apply a
@@ -23,7 +23,7 @@ meta-metrics, used to evaluate a scorer at a chosen adequacy-fluency
 balance instead of the dataset's natural (uniform-weight) one. Each is the
 natural weighted generalization of its unweighted counterpart:
 
-  - pearson/spearman: weighted covariance/variance (mwb.lib.alpha's
+  - pearson/spearman: weighted covariance/variance (mwb.lib.beta's
     weighted_mean/weighted_var operators, i.e. Sigma(w) from the paper's
     Sec. "The Balance Parameter"), which is exactly equivalent to
     reweighting every *pair* (i,j)'s contribution by w_i*w_j (Proposition
@@ -52,46 +52,46 @@ import warnings
 import numpy as np
 import scipy.stats
 
-from mwb.lib.alpha import weighted_mean, weighted_var
+from mwb.lib.beta import weighted_mean, weighted_var
 
 
 @dataclasses.dataclass
 class MetaEvalInput:
-  """Bundles what a meta-metric needs. human_seg/metric_seg (shape (K,
-  n_segments), system-major, same row order as human_sys/metric_sys) are
+  """Bundles what a meta-metric needs. human_seg/scorer_seg (shape (K,
+  n_segments), system-major, same row order as human_sys/scorer_sys) are
   only required by SPA; leave None for the other four."""
   human_sys: np.ndarray
-  metric_sys: np.ndarray
+  scorer_sys: np.ndarray
   human_seg: np.ndarray | None = None
-  metric_seg: np.ndarray | None = None
+  scorer_seg: np.ndarray | None = None
 
 
 def pearson(x: MetaEvalInput) -> float:
-  # A constant metric_sys (seen for at least one WMT23 control metric,
+  # A constant scorer_sys (seen for at least one WMT23 control scorer,
   # "Random-sysname") makes Pearson/Spearman undefined; scipy warns and
   # returns NaN, which callers already filter out (scorer_scores), so the
   # warning itself is silenced rather than left to print on expected data.
   with warnings.catch_warnings():
     warnings.simplefilter('ignore', scipy.stats.ConstantInputWarning)
-    return float(scipy.stats.pearsonr(x.human_sys, x.metric_sys)[0])
+    return float(scipy.stats.pearsonr(x.human_sys, x.scorer_sys)[0])
 
 
 def spearman(x: MetaEvalInput) -> float:
   with warnings.catch_warnings():
     warnings.simplefilter('ignore', scipy.stats.ConstantInputWarning)
-    return float(scipy.stats.spearmanr(x.human_sys, x.metric_sys)[0])
+    return float(scipy.stats.spearmanr(x.human_sys, x.scorer_sys)[0])
 
 
 def kendall(x: MetaEvalInput) -> float:
-  return float(scipy.stats.kendalltau(x.human_sys, x.metric_sys, variant='b')[0])
+  return float(scipy.stats.kendalltau(x.human_sys, x.scorer_sys, variant='b')[0])
 
 
 def pairwise_accuracy(x: MetaEvalInput) -> float:
-  """Fraction of system pairs where the metric agrees with the human sign,
+  """Fraction of system pairs where the scorer agrees with the human sign,
   among pairs the human scores actually distinguish (human tie -> excluded,
-  matching the standard WMT PA definition); a metric tie on a
+  matching the standard WMT PA definition); a scorer tie on a
   human-distinguished pair counts as discordant."""
-  h, m = np.asarray(x.human_sys), np.asarray(x.metric_sys)
+  h, m = np.asarray(x.human_sys), np.asarray(x.scorer_sys)
   K = len(h)
   iu, ju = np.triu_indices(K, 1)
   distinguishable = h[iu] != h[ju]
@@ -108,9 +108,9 @@ def pairwise_p_values(seg_scores: np.ndarray, num_permutations: int = 1000, seed
   pce.compute_pairwise_p_values). seg_scores: (num_systems, num_segments).
   Returns an upper-triangular (num_systems, num_systems) matrix, NaN
   elsewhere. Public (not the module's SPA internals only) because it does
-  not depend on any system weighting -- callers tracing an M(alpha) curve
+  not depend on any system weighting -- callers tracing an M(beta) curve
   should compute it once per (dataset, scorer) and reuse it across every
-  alpha via soft_pairwise_accuracy_from_pvalues, rather than recomputing
+  beta via soft_pairwise_accuracy_from_pvalues, rather than recomputing
   the permutation test at every point on the curve."""
   num_systems, num_segments = seg_scores.shape
   rng = np.random.default_rng(seed)
@@ -136,18 +136,18 @@ def pairwise_p_values(seg_scores: np.ndarray, num_permutations: int = 1000, seed
 
 
 def soft_pairwise_accuracy_from_pvalues(
-    human_p: np.ndarray, metric_p: np.ndarray, w: np.ndarray | None = None,
+    human_p: np.ndarray, scorer_p: np.ndarray, w: np.ndarray | None = None,
 ) -> float:
   """1 - (weighted) Pairwise Confidence Error, given precomputed pairwise
   p-value matrices (pairwise_p_values). Unweighted: 1 minus the mean
-  |p_human - p_metric| over all system pairs. Weighted: same, but each
+  |p_human - p_scorer| over all system pairs. Weighted: same, but each
   pair (i,j) is weighted by w_i*w_j -- the same pairwise-reweighting
   convention as weighted_kendall/weighted_pairwise_accuracy, and the
   natural way to fold in a system weighting since the two pairwise
   p-values themselves don't depend on any other system's weight."""
   K = human_p.shape[0]
   iu = np.triu_indices(K, 1)
-  diffs = np.abs(human_p[iu] - metric_p[iu])
+  diffs = np.abs(human_p[iu] - scorer_p[iu])
   if w is None:
     return float(1.0 - np.nanmean(diffs))
   wij = np.asarray(w)[iu[0]] * np.asarray(w)[iu[1]]
@@ -159,15 +159,15 @@ def soft_pairwise_accuracy_from_pvalues(
 
 def soft_pairwise_accuracy(x: MetaEvalInput, num_permutations: int = 1000, seed: int = 4) -> float:
   """1 - Pairwise Confidence Error: for every system pair, compare the
-  human-judged and metric-judged p-value for "system i is better", and
+  human-judged and scorer-judged p-value for "system i is better", and
   average |difference| over all pairs; report 1 minus that (so higher is
   still better, matching the other four). Requires segment-level scores for
-  both human and metric, position-aligned per system."""
-  if x.human_seg is None or x.metric_seg is None:
+  both human and scorer, position-aligned per system."""
+  if x.human_seg is None or x.scorer_seg is None:
     raise ValueError('soft_pairwise_accuracy needs segment-level scores')
   human_p = pairwise_p_values(x.human_seg, num_permutations, seed)
-  metric_p = pairwise_p_values(x.metric_seg, num_permutations, seed)
-  return soft_pairwise_accuracy_from_pvalues(human_p, metric_p)
+  scorer_p = pairwise_p_values(x.scorer_seg, num_permutations, seed)
+  return soft_pairwise_accuracy_from_pvalues(human_p, scorer_p)
 
 
 def weighted_soft_pairwise_accuracy(
@@ -176,16 +176,16 @@ def weighted_soft_pairwise_accuracy(
   """Weighted counterpart of soft_pairwise_accuracy: same per-pair p-values
   (unaffected by w -- each pair's permutation test only looks at those two
   systems' segment scores), aggregated with pair-weight w_i*w_j instead of
-  a plain mean. For repeated calls across an alpha grid at fixed (dataset,
+  a plain mean. For repeated calls across a beta grid at fixed (dataset,
   scorer), prefer computing pairwise_p_values once and calling
   soft_pairwise_accuracy_from_pvalues(..., w) directly -- this wrapper
   recomputes the permutation test every call, matching soft_pairwise_
   accuracy's (unweighted) one-shot convenience."""
-  if x.human_seg is None or x.metric_seg is None:
+  if x.human_seg is None or x.scorer_seg is None:
     raise ValueError('weighted_soft_pairwise_accuracy needs segment-level scores')
   human_p = pairwise_p_values(x.human_seg, num_permutations, seed)
-  metric_p = pairwise_p_values(x.metric_seg, num_permutations, seed)
-  return soft_pairwise_accuracy_from_pvalues(human_p, metric_p, w)
+  scorer_p = pairwise_p_values(x.scorer_seg, num_permutations, seed)
+  return soft_pairwise_accuracy_from_pvalues(human_p, scorer_p, w)
 
 
 METAMETRICS = {
@@ -208,7 +208,7 @@ NEEDS_SEGMENT_SCORES = {'spa'}
 # --- Weighted variants (module docstring explains the convention) ----------
 
 def weighted_pearson(x: MetaEvalInput, w: np.ndarray) -> float:
-  h, m, w = np.asarray(x.human_sys), np.asarray(x.metric_sys), np.asarray(w)
+  h, m, w = np.asarray(x.human_sys), np.asarray(x.scorer_sys), np.asarray(w)
   mu_h, mu_m = weighted_mean(h, w), weighted_mean(m, w)
   var_h, var_m = weighted_var(h, w), weighted_var(m, w)
   cov = float(np.dot(w, h * m) - mu_h * mu_m)
@@ -235,7 +235,7 @@ def _weighted_midranks(x: np.ndarray, w: np.ndarray) -> np.ndarray:
 def weighted_spearman(x: MetaEvalInput, w: np.ndarray) -> float:
   w = np.asarray(w)
   rh = _weighted_midranks(np.asarray(x.human_sys), w)
-  rm = _weighted_midranks(np.asarray(x.metric_sys), w)
+  rm = _weighted_midranks(np.asarray(x.scorer_sys), w)
   return weighted_pearson(MetaEvalInput(rh, rm), w)
 
 
@@ -245,7 +245,7 @@ def weighted_kendall(x: MetaEvalInput, w: np.ndarray) -> float:
   contributes 0 to the numerator but the pair still counts in the
   denominator (see mwb.lib.consistency's identical convention, chosen there so
   the scorer-pair-weighted mean equals a single pooled tau)."""
-  h, m, w = np.asarray(x.human_sys), np.asarray(x.metric_sys), np.asarray(w)
+  h, m, w = np.asarray(x.human_sys), np.asarray(x.scorer_sys), np.asarray(w)
   K = len(h)
   iu, ju = np.triu_indices(K, 1)
   wij = w[iu] * w[ju]
@@ -258,9 +258,9 @@ def weighted_kendall(x: MetaEvalInput, w: np.ndarray) -> float:
 
 
 def weighted_pairwise_accuracy(x: MetaEvalInput, w: np.ndarray) -> float:
-  """Pair-weighted PA: same human-tie exclusion and metric-tie-counts-as-
+  """Pair-weighted PA: same human-tie exclusion and scorer-tie-counts-as-
   discordant convention as pairwise_accuracy, aggregated by w_i*w_j."""
-  h, m, w = np.asarray(x.human_sys), np.asarray(x.metric_sys), np.asarray(w)
+  h, m, w = np.asarray(x.human_sys), np.asarray(x.scorer_sys), np.asarray(w)
   K = len(h)
   iu, ju = np.triu_indices(K, 1)
   distinguishable = h[iu] != h[ju]

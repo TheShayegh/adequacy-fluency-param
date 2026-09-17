@@ -1,28 +1,28 @@
-"""Two-panel LOO cross-rater Kendall tau vs. target alpha figure, one panel
+"""Two-panel LOO cross-rater Kendall tau vs. target beta figure, one panel
 per dataset (ende24, zhen23) -- combines the two independent
-compute_loo_tau_vs_alpha.py caches into a single figure with ONE SHARED
+compute_loo_tau_vs_beta.py caches into a single figure with ONE SHARED
 reliability colorbar, following the panel-combo style (figsize, font
-sizes) of plot_spa_plane_synthetic_diagonal_combo.py's two-panel layout
-(output/synthetic_scorers/spa_plane_synthetic_diagonal_combo_
+sizes) of plot_spa_plane_synthetic_af_combo.py's two-panel layout
+(output/scorer_augmentation_families_
 hlepor-ende21_metricx24hybrid-ende24.pdf). Purely a plotting script (reads
 the two existing .npz caches, no recomputation) -- see
-compute_loo_tau_vs_alpha.py / plot_loo_tau_vs_alpha.py for how the data
+compute_loo_tau_vs_beta.py / plot_loo_tau_vs_beta.py for how the data
 was produced and for the single-panel version of this same plot.
 
 Panel titles are short (PANEL_TITLES: "(a) ende24" / "(b) zhen23"), not
 the single-panel script's long descriptive one (dataset / sweep-range / K
-/ n-points) -- matches plot_spa_plane_synthetic_diagonal_combo.py's own
+/ n-points) -- matches plot_spa_plane_synthetic_af_combo.py's own
 "(letter) label" title convention.
 
-Style follows plot_spa_plane_synthetic_diagonal_combo.py throughout: all
+Style follows plot_spa_plane_synthetic_af_combo.py throughout: all
 four spines visible (closed box, not just left/bottom), square subplots
 (ax.set_box_aspect(1)), and only the y-axis's min/max value ticked (no
 intermediate gridline ticks).
 
 Shared colorbar: both panels' lines are colored by the SAME cmap + norm
 object, and ONE reliability strip is drawn (attached to the right panel
-only) via a LOCAL _draw_reliability_strip -- NOT plot_scorer_orientation_
-vs_alpha.py's own (that one hardcodes its label's rotation/labelpad/
+only) via a LOCAL _draw_reliability_strip -- NOT plot_scorer_preference_
+vs_beta.py's own (that one hardcodes its label's rotation/labelpad/
 fontsize convention internally; this local copy takes them as module-level
 CONSTANTS instead, per the same "everything position/text-related is a
 constant" convention as the rest of this file). Getting a shared strip
@@ -47,7 +47,7 @@ position, strip/colorbar position, strip label position), and text
 strings live in the CONSTANTS block right below the imports -- edit those,
 then just rerun (cheap: no solving happens here).
 
-Usage: python -m mwb.scripts.plot_loo_tau_vs_alpha_combo
+Usage: python -m mwb.scripts.plot_loo_tau_vs_beta_combo
 """
 
 import os
@@ -59,8 +59,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-from mwb.scripts.plot_loo_tau_vs_alpha import load_loo_tau_vs_alpha
-from mwb.scripts.plot_scorer_orientation_vs_alpha import SplineReliabilityNorm, _add_ess_colored_line, _ess_over_k_cmap, _ESS_CUTOFF_ABS
+from mwb.scripts.plot_loo_tau_vs_beta import load_loo_tau_vs_beta
+from mwb.scripts.plot_scorer_preference_vs_beta import SplineReliabilityNorm, _add_ess_colored_line, _ess_over_k_cmap, _ESS_CUTOFF_ABS
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
 ARTIFACTS_DIR = os.path.join(ROOT, 'output')
@@ -71,12 +71,12 @@ ARTIFACTS_DIR = os.path.join(ROOT, 'output')
 
 # (panel letter, dataset, cache path)
 PANELS = [
-    ('a', 'ende24', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_alpha_ende24_n21.npz')),
-    ('b', 'zhen23', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_alpha_zhen23_n21.npz')),
+    ('a', 'ende24', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_beta_ende24_n21.npz')),
+    ('b', 'zhen23', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_beta_zhen23_n21.npz')),
 ]
 
 # --- Figure geometry ---
-FIG_WIDTH = 40   # wider than plot_spa_plane_synthetic_diagonal_combo.py's own 34 -- this
+FIG_WIDTH = 40   # wider than plot_spa_plane_synthetic_af_combo.py's own 34 -- this
                  # figure's labels run longer than that script's, so it needs more room
 FIG_HEIGHT = 17
 FIGSIZE = (FIG_WIDTH, FIG_HEIGHT)
@@ -104,31 +104,31 @@ STRIP_LABEL_ROTATION = 270
 STRIP_LABEL_PAD = 34   # distance between the strip's tick labels and its own axis label
 STRIP_TICK_FONTSIZE = 50
 
-# --- Font sizes -- same numeric values as plot_spa_plane_synthetic_diagonal_combo.py ---
+# --- Font sizes -- same numeric values as plot_spa_plane_synthetic_af_combo.py ---
 TITLE_FONTSIZE = 54
 LABEL_FONTSIZE = 54
 TICK_FONTSIZE = 50
 LEGEND_FONTSIZE = 54
-ANNOTATION_FONTSIZE = 50   # the alpha_0(D) in-axes annotation
+ANNOTATION_FONTSIZE = 50   # the beta_0(D) in-axes annotation
 
 TICK_PAD = 25
 LINE_WIDTH = 12.0
 
-DARK_COLOR = (0.03, 0.15, 0.35)  # same navy as orientation plots' 'A' (adequacy) family
+DARK_COLOR = (0.03, 0.15, 0.35)  # same navy as preference plots' 'A' (adequacy) family
 Y_LIMITS = (0.5, 1.0)
 
 # --- Text ---
 XLABEL = r'$\beta$'
 YLABEL = r"Cross LOO Kendall's $\tau$"
-ALPHA0_ANNOTATION_TEXT = r'$\beta_0$'
+BETA0_ANNOTATION_TEXT = r'$\beta_0$'
 BASELINE_LEGEND_TEXT = r'Unweighted $\tau$'
-ALPHA0_LEGEND_TEXT = r'$\tau$($\beta$)'
+BETA0_LEGEND_TEXT = r'$\tau$($\beta$)'
 PANEL_TITLES = {'ende24': '(a) ende24', 'zhen23': '(b) zhen23'}  # per-panel title text
 
 
 def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs):
   """Local, fully-parameterized reliability-strip legend (see module
-  docstring for why this isn't plot_scorer_orientation_vs_alpha.py's own
+  docstring for why this isn't plot_scorer_preference_vs_beta.py's own
   _draw_reliability_strip): a manually-drawn image strip, since fig.
   colorbar always samples a continuous mappable's gradient UNIFORMLY (norm
   only moves tick positions, never the swatch's own pixel content), which
@@ -157,7 +157,7 @@ def _draw_reliability_strip(fig, ax, cmap, norm, K, cutoff_abs):
 if __name__ == '__main__':
   os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
-  panel_data = {letter: load_loo_tau_vs_alpha(cache) for letter, _, cache in PANELS}
+  panel_data = {letter: load_loo_tau_vs_beta(cache) for letter, _, cache in PANELS}
   K_ref = max(d['K'] - d['leave_out'] for d in panel_data.values())
   cutoff_frac = _ESS_CUTOFF_ABS / K_ref
 
@@ -168,19 +168,19 @@ if __name__ == '__main__':
 
   for ax, (letter, dataset, _) in zip(axes, PANELS):
     d = panel_data[letter]
-    alphas, tau, ess = d['alphas'], d['tau'], d['mean_ess']
+    betas, tau, ess = d['betas'], d['tau'], d['mean_ess']
     ess_over_k = ess / K_ref  # SAME denominator for both panels -- see module docstring
 
     ax.set_box_aspect(1)  # square PLOT box -- independent of the title/colorbar space around it
-    _add_ess_colored_line(ax, alphas, tau, ess_over_k, cmap, norm, linewidth=LINE_WIDTH, zorder=3)
+    _add_ess_colored_line(ax, betas, tau, ess_over_k, cmap, norm, linewidth=LINE_WIDTH, zorder=3)
 
     ax.axhline(d['baseline_tau'], color='red', linestyle='--', linewidth=1.5, zorder=2)
-    ax.axvline(d['a0_D'], color='black', alpha=0.3, linewidth=1.0, zorder=1)
-    ax.annotate(ALPHA0_ANNOTATION_TEXT, xy=(d['a0_D'], Y_LIMITS[1]), xytext=(0, -4),
+    ax.axvline(d['beta_0_D'], color='black', alpha=0.3, linewidth=1.0, zorder=1)
+    ax.annotate(BETA0_ANNOTATION_TEXT, xy=(d['beta_0_D'], Y_LIMITS[1]), xytext=(0, -4),
                 textcoords='offset points', ha='center', va='top',
                 fontsize=ANNOTATION_FONTSIZE, color='black')
 
-    ax.set_xlim(alphas.min(), alphas.max())
+    ax.set_xlim(betas.min(), betas.max())
     ax.set_ylim(*Y_LIMITS)
     ax.set_yticks([Y_LIMITS[0], Y_LIMITS[1]])  # min/max only, no intermediate ticks
     ax.set_xlabel(XLABEL, fontsize=LABEL_FONTSIZE)
@@ -193,7 +193,7 @@ if __name__ == '__main__':
 
   # rect reserves LEFT_MARGIN/RIGHT_MARGIN for the ylabel/strip, drawn AFTER
   # tight_layout off axes[1]'s FINAL bbox -- same order/reasoning as
-  # plot_scorer_orientation_vs_alpha.py's own strip placement (calling
+  # plot_scorer_preference_vs_beta.py's own strip placement (calling
   # tight_layout after the strip exists would shove the panels around
   # without the strip in mind).
   fig.tight_layout(rect=[LEFT_MARGIN, 0, RIGHT_MARGIN, 1.0])
@@ -204,17 +204,17 @@ if __name__ == '__main__':
   fig.text(YLABEL_X, YLABEL_Y, YLABEL, fontsize=LABEL_FONTSIZE, rotation=90, ha='left', va='center')
 
   proxy_red = Line2D([0], [0], color='red', ls='--', lw=1.5, label=BASELINE_LEGEND_TEXT)
-  proxy_black = Line2D([0], [0], color='black', alpha=0.3, lw=1.0, label=ALPHA0_LEGEND_TEXT)
+  proxy_black = Line2D([0], [0], color='black', alpha=0.3, lw=1.0, label=BETA0_LEGEND_TEXT)
   fig.legend(handles=[proxy_red, proxy_black], loc='lower left', bbox_to_anchor=(LEGEND_X, LEGEND_Y),
              frameon=False, fontsize=LEGEND_FONTSIZE)
 
   _draw_reliability_strip(fig, axes[1], cmap, norm, K_ref, _ESS_CUTOFF_ABS)
 
   # bbox_inches='tight' doesn't reliably auto-detect every legend on its
-  # own (see plot_scorer_orientation_vs_alpha.py's own note on this) --
+  # own (see plot_scorer_preference_vs_beta.py's own note on this) --
   # pass every Legend artist explicitly via bbox_extra_artists.
   legend_artists = fig.findobj(matplotlib.legend.Legend)
-  out_path = os.path.join(ARTIFACTS_DIR, 'loo_tau_vs_alpha_combo_ende24_zhen23.pdf')
+  out_path = os.path.join(ARTIFACTS_DIR, 'loo_tau_vs_beta_combo_ende24_zhen23.pdf')
   fig.savefig(out_path, dpi=150, bbox_inches='tight', bbox_extra_artists=legend_artists)
   plt.close(fig)
   print(f'Wrote {out_path}', file=sys.stderr)

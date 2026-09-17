@@ -1,7 +1,7 @@
 """Leave-p-out (LpO) scorer-ranking stability: exhaustively drop every
 size-p subset of a dataset's systems, score the remaining K-p systems as
 one "rater" (natural, uniform weight, or reweighted to a shared fixed
-target_alpha via mwb.lib.reweight_exact.solve_w_exact), and pool the
+target_beta via mwb.lib.reweight_exact.solve_w_exact), and pool the
 resulting C(K,p) scorer rankings into a single Kendall's tau-a via
 mwb.lib.consistency.pool_weighted_tau -- the same pooling convention this
 project uses for cross-dataset scorer-ranking consistency: every pair of
@@ -12,9 +12,9 @@ scorer-pairs, and tau is computed ONCE from those pooled totals -- not a
 plain average of per-pair taus.
 
 p=1 (leave-ONE-out) is this project's primary case, used both to measure a
-dataset's raw system-selection sensitivity (target_alpha=None) and to test
+dataset's raw system-selection sensitivity (target_beta=None) and to test
 whether fixing the adequacy-fluency balance across LOO subsets stabilizes
-scorer rankings (target_alpha=<float>, the same target for every subset).
+scorer rankings (target_beta=<float>, the same target for every subset).
 """
 
 from __future__ import annotations
@@ -36,20 +36,20 @@ from mwb.mqm_scoring import load_system_scores
 def _score_one_draw(job: tuple) -> tuple[dict | None, float | None]:
   """Top-level (module-level, so it's picklable for ProcessPoolExecutor)
   worker: scores ONE dropped-combo rater under ONE condition. job =
-  (dataset, metametric, root, subset, target_alpha) -- target_alpha=None is
+  (dataset, metametric, root, subset, target_beta) -- target_beta=None is
   the natural condition (ESS is exactly len(subset) by definition, no solve
   needed); a float reweights to that target via solve_w_exact first.
-  Returns (scores_dict, ess), or (None, None) if target_alpha was given but
+  Returns (scores_dict, ess), or (None, None) if target_beta was given but
   infeasible for this subset (outside its reachable range) -- the caller
   drops it."""
-  dataset, metametric, root, subset, target_alpha = job
-  if target_alpha is None:
+  dataset, metametric, root, subset, target_beta = job
+  if target_beta is None:
     scores = scorer_scores(dataset, metametric, root=root, systems=subset)
     return scores.to_dict(), float(len(subset))
   df = load_system_scores(dataset, root=root)
-  a_sub, b_sub = df.loc[subset, 'a'].values, df.loc[subset, 'b'].values
+  a_sub, f_sub = df.loc[subset, 'a'].values, df.loc[subset, 'f'].values
   try:
-    r = solve_w_exact(a_sub, b_sub, target_alpha)
+    r = solve_w_exact(a_sub, f_sub, target_beta)
   except ValueError:
     return None, None
   scores = scorer_scores(dataset, metametric, root=root, w=r.w, systems=subset)
@@ -58,7 +58,7 @@ def _score_one_draw(job: tuple) -> tuple[dict | None, float | None]:
 
 def _score_lpo_combos(
     dataset: str, metametric: str, p: int, root: str, exclude_outliers: bool,
-    systems: list[str] | None, max_workers: int | None, target_alpha: float | None,
+    systems: list[str] | None, max_workers: int | None, target_beta: float | None,
     caller_name: str,
 ) -> tuple[list[str], list[str], list[tuple], dict[tuple, dict], dict[tuple, float],
            list[tuple], int]:
@@ -81,7 +81,7 @@ def _score_lpo_combos(
 
   combos = list(itertools.combinations(full_systems, p))
   jobs = [(dataset, metametric, root, [s for s in full_systems if s not in set(combo)],
-           target_alpha) for combo in combos]
+           target_beta) for combo in combos]
 
   scores_by_combo: dict[tuple, dict] = {}
   ess_by_combo: dict[tuple, float] = {}
@@ -91,10 +91,10 @@ def _score_lpo_combos(
     for fut in cf.as_completed(future_to_combo):
       combo = future_to_combo[fut]
       scores_dict, ess = fut.result()
-      if scores_dict is not None:  # None only when target_alpha was infeasible for this combo
+      if scores_dict is not None:  # None only when target_beta was infeasible for this combo
         scores_by_combo[combo] = scores_dict
         ess_by_combo[combo] = ess
-  if target_alpha is None:
+  if target_beta is None:
     assert len(scores_by_combo) == len(combos)  # natural condition is never infeasible
   used_combos = [c for c in combos if c in scores_by_combo]  # preserve combinations() order
   n_infeasible = len(combos) - len(used_combos)
@@ -110,11 +110,11 @@ def leave_p_out_tau(
     exclude_outliers: bool = True,
     systems: list[str] | None = None,
     max_workers: int | None = None,
-    target_alpha: float | None = None,
+    target_beta: float | None = None,
 ) -> dict:
   """Pooled Kendall's tau-a over the C(K,p) exhaustive leave-p-out (LpO)
   raters (each scored once, natural or reweighted to a shared fixed
-  target_alpha -- see module docstring). Objects are restricted up front to
+  target_beta -- see module docstring). Objects are restricted up front to
   mwb.lib.consistency.real_scorers(dataset, systems=full_systems,
   require_seg_scores=...), the project's canonical scorer screen; unlike a
   fully-crossed design, pool_weighted_tau does NOT need every rater to
@@ -123,7 +123,7 @@ def leave_p_out_tau(
   to every other pair it IS present in."""
   full_systems, outliers, combos, scores_by_combo, ess_by_combo, used_combos, n_infeasible = (
       _score_lpo_combos(dataset, metametric, p, root, exclude_outliers, systems,
-                         max_workers, target_alpha, 'leave_p_out_tau'))
+                         max_workers, target_beta, 'leave_p_out_tau'))
   K = len(full_systems)
 
   natural_full = scorer_scores(dataset, metametric, root=root, systems=full_systems)
@@ -144,7 +144,7 @@ def leave_p_out_tau(
 
   return {
       'dataset': dataset, 'metametric': metametric, 'K': K, 'p': p,
-      'target_alpha': target_alpha, 'tau': tau, 'total_weight': total_weight,
+      'target_beta': target_beta, 'tau': tau, 'total_weight': total_weight,
       'mean_ess': mean_ess, 'n_scorers_canonical': len(canonical_scorers),
       'outliers_dropped': outliers, 'n_raters_total': len(combos),
       'n_raters_used': len(used_combos), 'n_infeasible': n_infeasible,

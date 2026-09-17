@@ -1,6 +1,6 @@
 """SPA Plane (Shayegh et al. 2025's construction, reused by our paper's
 Figure 2): for a dataset, a 2-D plot where every scorer (external automatic
-MT metric, e.g. BLEU/Comet/MetricX) is one point at
+MT scorer, e.g. BLEU/Comet/MetricX) is one point at
 
     x = SPA(scorer; Fluency MQM)     y = SPA(scorer; Adequacy MQM)
 
@@ -9,7 +9,7 @@ treating Fluency MQM's segment scores as the "human" ground truth and once
 treating Adequacy MQM's as the "human" ground truth (rather than the usual
 All MQM). Augmented with three sentinel curves:
 
-  - tradeoff_line: score_seg(lam) = lam*a_seg + (1-lam)*b_seg, lam in [0,1]
+  - tradeoff_line: score_seg(lam) = lam*a_seg + (1-lam)*f_seg, lam in [0,1]
     -- the segment-level linear interpolation of Adequacy and Fluency MQM.
     lam=1 -> the Adequacy MQM vertex (y=1 exactly); lam=0 -> the Fluency MQM
     vertex (x=1 exactly). "No system can surpass" this curve.
@@ -23,7 +23,7 @@ Both knowledge lines are paper-specified as an average of 10 curves, each
 redrawing r_seg from a fresh RNG instance (see knowledge_lines' `shadows`
 returns) -- computed TOGETHER by knowledge_lines, not as two independent
 sweeps, and sharing the SAME r_seg (one draw per instance k, uniform over
-the per-segment range that COVERS BOTH a_seg and b_seg -- see
+the per-segment range that COVERS BOTH a_seg and f_seg -- see
 knowledge_lines) rather than each line rescaling its own independent draw
 to its own aspect's range. This is what makes the two lines a genuine
 CONNECTED pair at each instance k: at lam=0 both curves evaluate the exact
@@ -40,7 +40,7 @@ functions:
     scorer is involved -- so they can use mwb.mqm_scoring's own
     (doc, doc_id, seg_id)-keyed segment index directly.
   - positional_af_matrices: a scorer's own segment scores
-    (mwb.lib.metric_scores.load_metric_seg_scores) are indexed by LINE POSITION
+    (mwb.lib.scorer_score_files.load_scorer_seg_scores) are indexed by LINE POSITION
     in the dataset's official WMT source file, a different index space than
     mqm_scoring's (doc, doc_id, seg_id) keys for most datasets. Only for
     the sets where mwb.mqm_scoring.OFFICIAL_RATINGS applies (or, for the
@@ -57,7 +57,7 @@ functions:
     instead under-corrs even on perfectly-aligned datasets -- found
     empirically on ende23: 0.993 against 'all_mqm' vs. exact 1.0 against
     'full') at each int(seg_id) position, and requires near-exact
-    correlation against mwb.lib.metric_scores.load_human_seg_scores's OFFICIAL
+    correlation against mwb.lib.scorer_score_files.load_human_seg_scores's OFFICIAL
     positionally-indexed all_mqm at the same positions (a valid alignment
     should match almost exactly; a broken one is uncorrelated). Datasets
     that fail this check contribute sentinel lines but no scorer points
@@ -69,7 +69,7 @@ from __future__ import annotations
 import numpy as np
 
 from mwb.lib.metametrics import pairwise_p_values, soft_pairwise_accuracy_from_pvalues
-from mwb.lib.metric_scores import load_human_seg_scores, load_metric_seg_scores, load_metric_sys_scores
+from mwb.lib.scorer_score_files import load_human_seg_scores, load_scorer_seg_scores, load_scorer_sys_scores
 from mwb.mqm_scoring import load_segment_scores
 
 # Same floor mwb.lib.consistency uses before trusting SPA's permutation
@@ -107,27 +107,27 @@ DEFAULT_NOISE_SEED = 1234 # base seed for the 10 random-noise instances.
 # --- (doc, doc_id, seg_id)-keyed matrices, for the sentinel lines ----------
 
 def build_af_seg_matrices(dataset: str, systems: list[str], root: str = '.'):
-  """(a_seg, b_seg), each (K, n_common_segments) row-ordered as `systems`,
+  """(a_seg, f_seg), each (K, n_common_segments) row-ordered as `systems`,
   restricted to segments every one of `systems` has both an adequacy and a
   fluency score for. (None, None) if fewer than _MIN_SPA_SEGMENTS such
   segments exist."""
   seg_df = load_segment_scores(dataset, root=root)
   seg_df = seg_df[seg_df['system'].isin(systems)]
   wide_a = seg_df.pivot_table(index=_SEGMENT_KEYS, columns='system', values='adequacy')
-  wide_b = seg_df.pivot_table(index=_SEGMENT_KEYS, columns='system', values='fluency')
-  valid = ~(wide_a.isna().any(axis=1) | wide_b.isna().any(axis=1))
-  wide_a, wide_b = wide_a.loc[valid], wide_b.loc[valid]
+  wide_f = seg_df.pivot_table(index=_SEGMENT_KEYS, columns='system', values='fluency')
+  valid = ~(wide_a.isna().any(axis=1) | wide_f.isna().any(axis=1))
+  wide_a, wide_f = wide_a.loc[valid], wide_f.loc[valid]
   if len(wide_a) < _MIN_SPA_SEGMENTS:
     return None, None
-  return wide_a.reindex(columns=systems).values.T, wide_b.reindex(columns=systems).values.T
+  return wide_a.reindex(columns=systems).values.T, wide_f.reindex(columns=systems).values.T
 
 
 # --- Line-position-keyed matrices, for scorer points ------------------------
 
 def positional_af_matrices(dataset: str, systems: list[str], root: str = '.'):
-  """(a_pos, b_pos), each (K, n_positions) row-ordered as `systems` and
+  """(a_pos, f_pos), each (K, n_positions) row-ordered as `systems` and
   column-indexed by line position in the dataset's official WMT source file
-  (module docstring) -- the same index space mwb.lib.metric_scores' segment
+  (module docstring) -- the same index space mwb.lib.scorer_score_files' segment
   matrices use. None if that alignment can't be validated for this dataset
   (module docstring)."""
   official_t = load_human_seg_scores(dataset, systems, root=root)
@@ -141,7 +141,7 @@ def positional_af_matrices(dataset: str, systems: list[str], root: str = '.'):
   seg_df = seg_df[seg_df['system'].isin(systems)]
 
   a_pos = np.full((K, n_positions), np.nan)
-  b_pos = np.full((K, n_positions), np.nan)
+  f_pos = np.full((K, n_positions), np.nan)
   full_pos = np.full((K, n_positions), np.nan)
   for row in seg_df.itertuples(index=False):
     try:
@@ -152,7 +152,7 @@ def positional_af_matrices(dataset: str, systems: list[str], root: str = '.'):
       continue
     i = sys_idx[row.system]
     a_pos[i, pos] = row.adequacy
-    b_pos[i, pos] = row.fluency
+    f_pos[i, pos] = row.fluency
     full_pos[i, pos] = row.full
 
   mask = ~np.isnan(full_pos) & ~np.isnan(official_t)
@@ -161,7 +161,7 @@ def positional_af_matrices(dataset: str, systems: list[str], root: str = '.'):
   corr = np.corrcoef(full_pos[mask], official_t[mask])[0, 1]
   if not (corr == corr) or corr < _VALIDATION_CORR_FLOOR:
     return None
-  return a_pos, b_pos
+  return a_pos, f_pos
 
 
 def scorer_spa_points(
@@ -169,29 +169,29 @@ def scorer_spa_points(
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
 ) -> dict[str, tuple[float, float]]:
   """scorer name -> (x=SPA vs Fluency MQM, y=SPA vs Adequacy MQM), for every
-  scorer with full system-level coverage (mwb.lib.metric_scores.
-  load_metric_sys_scores -- same candidate gate mwb.lib.consistency.
+  scorer with full system-level coverage (mwb.lib.scorer_score_files.
+  load_scorer_sys_scores -- same candidate gate mwb.lib.consistency.
   load_scorer_inputs uses) AND enough jointly-valid positions with a_pos/
-  b_pos. {} if positional_af_matrices can't validate this dataset's
+  f_pos. {} if positional_af_matrices can't validate this dataset's
   alignment at all."""
   pos = positional_af_matrices(dataset, systems, root=root)
   if pos is None:
     return {}
-  a_pos, b_pos = pos
+  a_pos, f_pos = pos
 
-  candidates = load_metric_sys_scores(dataset, systems, root=root)
+  candidates = load_scorer_sys_scores(dataset, systems, root=root)
   out = {}
   for name in candidates:
-    metric_seg = load_metric_seg_scores(dataset, name, systems, root=root)
-    if metric_seg is None or metric_seg.shape[1] != a_pos.shape[1]:
+    scorer_seg = load_scorer_seg_scores(dataset, name, systems, root=root)
+    if scorer_seg is None or scorer_seg.shape[1] != a_pos.shape[1]:
       continue
-    mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(b_pos).any(axis=0) | np.isnan(metric_seg).any(axis=0))
+    mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(f_pos).any(axis=0) | np.isnan(scorer_seg).any(axis=0))
     if mask.sum() < _MIN_SPA_SEGMENTS:
       continue
     p_a = pairwise_p_values(a_pos[:, mask], num_permutations, seed)
-    p_b = pairwise_p_values(b_pos[:, mask], num_permutations, seed)
-    p_m = pairwise_p_values(metric_seg[:, mask], num_permutations, seed)
-    x = soft_pairwise_accuracy_from_pvalues(p_b, p_m)
+    p_f = pairwise_p_values(f_pos[:, mask], num_permutations, seed)
+    p_m = pairwise_p_values(scorer_seg[:, mask], num_permutations, seed)
+    x = soft_pairwise_accuracy_from_pvalues(p_f, p_m)
     y = soft_pairwise_accuracy_from_pvalues(p_a, p_m)
     if x == x and y == y:  # excludes NaN
       out[name] = (x, y)
@@ -201,79 +201,79 @@ def scorer_spa_points(
 # --- Sentinel lines -----------------------------------------------------
 
 def tradeoff_line(
-    a_seg: np.ndarray, b_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
+    a_seg: np.ndarray, f_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
 ) -> list[tuple[float, float]]:
   """[(x, y)] for lam in lambda_grid, score_seg(lam) = lam*a_seg +
-  (1-lam)*b_seg -- exact Adequacy MQM vertex (x, 1.0) at lam=1, exact
+  (1-lam)*f_seg -- exact Adequacy MQM vertex (x, 1.0) at lam=1, exact
   Fluency MQM vertex (1.0, y) at lam=0 (soft_pairwise_accuracy_from_pvalues
   of a p-value matrix against itself, at fixed seed, is exactly 1)."""
   p_a = pairwise_p_values(a_seg, num_permutations, seed)
-  p_b = pairwise_p_values(b_seg, num_permutations, seed)
+  p_f = pairwise_p_values(f_seg, num_permutations, seed)
   pts = []
   for lam in lambda_grid:
-    score = lam * a_seg + (1.0 - lam) * b_seg
+    score = lam * a_seg + (1.0 - lam) * f_seg
     p_m = pairwise_p_values(score, num_permutations, seed)
-    x = soft_pairwise_accuracy_from_pvalues(p_b, p_m)
+    x = soft_pairwise_accuracy_from_pvalues(p_f, p_m)
     y = soft_pairwise_accuracy_from_pvalues(p_a, p_m)
     pts.append((x, y))
   return pts
 
 
-def _combined_range(a_seg: np.ndarray, b_seg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-  """Per-segment (column) (lo, hi), covering BOTH a_seg and b_seg at once
+def _combined_range(a_seg: np.ndarray, f_seg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  """Per-segment (column) (lo, hi), covering BOTH a_seg and f_seg at once
   (lo = min over both, hi = max over both) -- the range one SHARED noise
   draw is rescaled into, symmetric between the two aspects rather than
   favoring either one's own range."""
-  lo = np.minimum(a_seg.min(axis=0, keepdims=True), b_seg.min(axis=0, keepdims=True))
-  hi = np.maximum(a_seg.max(axis=0, keepdims=True), b_seg.max(axis=0, keepdims=True))
+  lo = np.minimum(a_seg.min(axis=0, keepdims=True), f_seg.min(axis=0, keepdims=True))
+  hi = np.maximum(a_seg.max(axis=0, keepdims=True), f_seg.max(axis=0, keepdims=True))
   return lo, hi
 
 
 def knowledge_lines(
-    a_seg: np.ndarray, b_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
+    a_seg: np.ndarray, f_seg: np.ndarray, lambda_grid=LAMBDA_GRID,
     n_random: int = N_RANDOM_INSTANCES, num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
     seed: int = DEFAULT_SEED, noise_seed: int = DEFAULT_NOISE_SEED,
 ) -> tuple[list[list[tuple[float, float]]], list[tuple[float, float]],
            list[list[tuple[float, float]]], list[tuple[float, float]]]:
-  """(a_shadows, a_mean, b_shadows, b_mean): the adequacy- and fluency-
+  """(a_shadows, a_mean, f_shadows, f_mean): the adequacy- and fluency-
   knowledge lines (paper Figure SPAplane) computed TOGETHER, so their
   shadow instances are genuinely CONNECTED pairs, not two independent
   sweeps. For shadow instance k, ONE noise segment r_seg (per-segment
-  Uniform[lo, hi], (lo, hi) = _combined_range(a_seg, b_seg) -- covering
+  Uniform[lo, hi], (lo, hi) = _combined_range(a_seg, f_seg) -- covering
   both aspects' ranges rather than favoring either one) is drawn ONCE and
   used for BOTH curves: score_a(lam) = lam*a_seg + (1-lam)*r_seg (the k-th
-  adequacy-knowledge shadow) and score_b(lam) = lam*b_seg + (1-lam)*r_seg
+  adequacy-knowledge shadow) and score_f(lam) = lam*f_seg + (1-lam)*r_seg
   (the k-th fluency-knowledge shadow). At lam=0 both curves evaluate the
-  exact same r_seg, so pts_a[0] == pts_b[0] EXACTLY -- shadow k of one line
+  exact same r_seg, so pts_a[0] == pts_f[0] EXACTLY -- shadow k of one line
   and shadow k of the other visibly meet at that shared noise-only point,
   rather than two independently-scaled endpoints. The OLD design rescaled
   a shared raw draw separately per aspect (once to a_seg's own range, once
-  to b_seg's), which kept the two curves correlated but never let them
+  to f_seg's), which kept the two curves correlated but never let them
   actually touch, since a rescaled-to-a's-range point and a rescaled-to-
-  b's-range point are generally different points even from the same raw
-  draw. p_a/p_b are computed once and reused across every instance and
+  f's-range point are generally different points even from the same raw
+  draw. p_a/p_f are computed once and reused across every instance and
   lam."""
   p_a = pairwise_p_values(a_seg, num_permutations, seed)
-  p_b = pairwise_p_values(b_seg, num_permutations, seed)
-  lo, hi = _combined_range(a_seg, b_seg)
-  a_shadows, b_shadows = [], []
+  p_f = pairwise_p_values(f_seg, num_permutations, seed)
+  lo, hi = _combined_range(a_seg, f_seg)
+  a_shadows, f_shadows = [], []
   for k in range(n_random):
     rng = np.random.default_rng(noise_seed + k)
     noise_seg = lo + rng.random(a_seg.shape) * (hi - lo)
-    pts_a, pts_b = [], []
+    pts_a, pts_f = [], []
     for lam in lambda_grid:
       score_a = lam * a_seg + (1.0 - lam) * noise_seg
       p_m_a = pairwise_p_values(score_a, num_permutations, seed)
-      pts_a.append((soft_pairwise_accuracy_from_pvalues(p_b, p_m_a),
+      pts_a.append((soft_pairwise_accuracy_from_pvalues(p_f, p_m_a),
                     soft_pairwise_accuracy_from_pvalues(p_a, p_m_a)))
 
-      score_b = lam * b_seg + (1.0 - lam) * noise_seg
-      p_m_b = pairwise_p_values(score_b, num_permutations, seed)
-      pts_b.append((soft_pairwise_accuracy_from_pvalues(p_b, p_m_b),
-                    soft_pairwise_accuracy_from_pvalues(p_a, p_m_b)))
+      score_f = lam * f_seg + (1.0 - lam) * noise_seg
+      p_m_f = pairwise_p_values(score_f, num_permutations, seed)
+      pts_f.append((soft_pairwise_accuracy_from_pvalues(p_f, p_m_f),
+                    soft_pairwise_accuracy_from_pvalues(p_a, p_m_f)))
     a_shadows.append(pts_a)
-    b_shadows.append(pts_b)
+    f_shadows.append(pts_f)
   a_mean = np.mean(np.array(a_shadows), axis=0).tolist()
-  b_mean = np.mean(np.array(b_shadows), axis=0).tolist()
-  return a_shadows, [tuple(pt) for pt in a_mean], b_shadows, [tuple(pt) for pt in b_mean]
+  f_mean = np.mean(np.array(f_shadows), axis=0).tolist()
+  return a_shadows, [tuple(pt) for pt in a_mean], f_shadows, [tuple(pt) for pt in f_mean]

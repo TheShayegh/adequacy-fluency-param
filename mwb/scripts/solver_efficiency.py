@@ -42,9 +42,9 @@ import os
 
 import numpy as np
 
-from mwb.lib.alpha import alpha_0, alpha_min_max, pairwise_alphas
+from mwb.lib.beta import beta_0, beta_min_max, pairwise_betas
 from mwb.lib.consistency import real_systems
-from mwb.lib.reweight_exact import _admissible, _curvature_ok, _d_all, _prop1_2x2, _support_candidates, alpha_of
+from mwb.lib.reweight_exact import _admissible, _curvature_ok, _d_all, _prop1_2x2, _support_candidates, beta_of
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -65,24 +65,24 @@ def _scan_points(n_poles: int) -> int:
   return _N_WINDOW
 
 
-def _support_flops(a_S: np.ndarray, b_S: np.ndarray, alpha: float, tol: float = _TOL) -> int:
+def _support_flops(a_S: np.ndarray, f_S: np.ndarray, beta: float, tol: float = _TOL) -> int:
   """Approximate FLOP cost of _support_candidates on one support, without
   re-running the scan itself: _prop1_2x2 (a fixed small cost) plus the
   secular-equation scan cost, which only depends on how many of the two
   poles are non-degenerate (see module docstring)."""
-  mu_a, mu_b = float(a_S.mean()), float(b_S.mean())
+  mu_a, mu_f = float(a_S.mean()), float(f_S.mean())
   va = float(np.mean((a_S - mu_a) ** 2))
-  vb = float(np.mean((b_S - mu_b) ** 2))
-  alpha0_S = va / (va + vb) if (va + vb) > 0 else 0.5
-  if abs(alpha - alpha0_S) < tol:
+  vf = float(np.mean((f_S - mu_f) ** 2))
+  beta0_S = va / (va + vf) if (va + vf) > 0 else 0.5
+  if abs(beta - beta0_S) < tol:
     return 20  # anchor case: closed-form, no scan
-  theta1, theta2, rho, *_ = _prop1_2x2(a_S, b_S, alpha)
+  theta1, theta2, rho, *_ = _prop1_2x2(a_S, f_S, beta)
   n_poles = 1 if abs(1.0 - rho ** 2) < tol else (2 if abs(theta2) > tol else 1)
   return 30 + _scan_points(n_poles) * _OPS_PER_SCAN_POINT
 
 
 def solve_instrumented(
-    a: np.ndarray, b: np.ndarray, alpha: float,
+    a: np.ndarray, f: np.ndarray, beta: float,
     use_admissible: bool = True, use_size_pruning: bool = True, use_certificate: bool = True,
     tol: float = _TOL,
 ) -> dict:
@@ -99,12 +99,12 @@ def solve_instrumented(
   "Admissible supports"), size_pruning_fired (bool), certificate_fired
   (bool)."""
   a = np.asarray(a, dtype=float)
-  b = np.asarray(b, dtype=float)
+  f = np.asarray(f, dtype=float)
   K = len(a)
-  pairs = pairwise_alphas(a, b)
-  alpha_min, alpha_max = alpha_min_max(a, b)
-  if not (alpha_min - tol <= alpha <= alpha_max + tol):
-    raise ValueError(f'alpha={alpha} outside reachable range [{alpha_min}, {alpha_max}]')
+  pairs = pairwise_betas(a, f)
+  beta_min, beta_max = beta_min_max(a, f)
+  if not (beta_min - tol <= beta <= beta_max + tol):
+    raise ValueError(f'beta={beta} outside reachable range [{beta_min}, {beta_max}]')
 
   best = None  # (ess, w, support, certified)
   n_supports_visited = 0
@@ -124,11 +124,11 @@ def solve_instrumented(
       if lo_S is None:
         continue
       if use_admissible:
-        if not _admissible(alpha, lo_S, hi_S, tol):
+        if not _admissible(beta, lo_S, hi_S, tol):
           admissible_fires += 1
           continue
       n_supports_visited += 1
-      flops += _support_flops(a[list(S)], b[list(S)], alpha, tol)
+      flops += _support_flops(a[list(S)], f[list(S)], beta, tol)
 
       # Silenced: with pruning disabled this deliberately runs
       # _support_candidates outside its guaranteed-valid domain (see the
@@ -136,11 +136,11 @@ def solve_instrumented(
       # intermediate values -- caught and skipped explicitly below, so the
       # numpy-level warning is noise, not a signal.
       with np.errstate(all='ignore'):
-        candidates = _support_candidates(a, b, S, alpha, tol)
+        candidates = _support_candidates(a, f, S, beta, tol)
       for w, eta in candidates:
         n_candidates_evaluated += 1
         # With Theorem "Admissible supports" pruning disabled, this loop
-        # calls _support_candidates on supports where the target alpha is
+        # calls _support_candidates on supports where the target beta is
         # genuinely unreachable -- outside that function's guaranteed-valid
         # domain (the production solver never does this, since it always
         # prunes first). A candidate there can come back numerically
@@ -159,7 +159,7 @@ def solve_instrumented(
           if w_sum <= 0:
             continue
           w = w / w_sum
-          if not np.isfinite(w).all() or abs(alpha_of(a, b, w) - alpha) > 1e-6:
+          if not np.isfinite(w).all() or abs(beta_of(a, f, w) - beta) > 1e-6:
             continue
           actual_support = tuple(i for i in range(K) if w[i] > tol)
           if actual_support != S:
@@ -170,12 +170,12 @@ def solve_instrumented(
         ess = 1.0 / float(np.sum(w ** 2))
         certified = False
         if use_certificate:
-          d_all = _d_all(w, a, b, alpha)
+          d_all = _d_all(w, a, f, beta)
           i0 = S[0]
           lam = -(w[i0] + eta * d_all[i0])
           outside = [i for i in range(K) if i not in S]
           cond2 = all(lam + eta * d_all[i] >= -tol for i in outside)
-          cond3 = _curvature_ok(a, b, alpha, eta, tol)
+          cond3 = _curvature_ok(a, f, beta, eta, tol)
           certified = cond2 and cond3
 
         if best is None or ess > best[0]:
@@ -211,14 +211,14 @@ _CONFIGS = [
 ]
 
 
-def run_regime(a: np.ndarray, b: np.ndarray, targets: list[float]) -> dict:
+def run_regime(a: np.ndarray, f: np.ndarray, targets: list[float]) -> dict:
   """Table "solve-exact-operation-counts": one row per (admissible,
   size_pruning, certificate) config, summed over `targets`."""
   rows = {}
   for cfg in _CONFIGS:
     n_sup = n_cand = flops = successes = 0
-    for alpha in targets:
-      r = solve_instrumented(a, b, alpha, *cfg)
+    for beta in targets:
+      r = solve_instrumented(a, f, beta, *cfg)
       n_sup += r['n_supports_visited']
       n_cand += r['n_candidates_evaluated']
       flops += r['flops']
@@ -230,14 +230,14 @@ def run_regime(a: np.ndarray, b: np.ndarray, targets: list[float]) -> dict:
   return rows
 
 
-def count_invocations(a: np.ndarray, b: np.ndarray, targets: list[float]) -> dict:
+def count_invocations(a: np.ndarray, f: np.ndarray, targets: list[float]) -> dict:
   """Table "solve-exact-theorem-invocations": totals over `targets`, all
   three pruning mechanisms enabled (the production configuration)."""
   admissible_total = 0
   size_pruning_total = 0
   certificate_total = 0
-  for alpha in targets:
-    r = solve_instrumented(a, b, alpha, True, True, True)
+  for beta in targets:
+    r = solve_instrumented(a, f, beta, True, True, True)
     admissible_total += r['admissible_fires']
     size_pruning_total += int(r['size_pruning_fired'])
     certificate_total += int(r['certificate_fired'])
@@ -266,22 +266,22 @@ def main(argv=None) -> None:
   if not systems:
     raise SystemExit(f'{args.dataset}: 0 real systems, nothing to compute')
   df = load_system_scores(args.dataset, root=ROOT)
-  a, b = df.loc[systems, 'a'].values, df.loc[systems, 'b'].values
+  a, f = df.loc[systems, 'a'].values, df.loc[systems, 'f'].values
   K = len(systems)
-  a0 = alpha_0(a, b)
-  alpha_lo, alpha_hi = alpha_min_max(a, b)
-  print(f'{args.dataset}: K={K}, beta_0={a0:.4f}, reachable range [{alpha_lo:.4f}, {alpha_hi:.4f}]')
+  beta0 = beta_0(a, f)
+  beta_lo, beta_hi = beta_min_max(a, f)
+  print(f'{args.dataset}: K={K}, beta_0={beta0:.4f}, reachable range [{beta_lo:.4f}, {beta_hi:.4f}]')
 
-  narrow_lo = max(alpha_lo, a0 - args.narrow_window)
-  narrow_hi = min(alpha_hi, a0 + args.narrow_window)
+  narrow_lo = max(beta_lo, beta0 - args.narrow_window)
+  narrow_hi = min(beta_hi, beta0 + args.narrow_window)
   narrow_targets = list(np.linspace(narrow_lo, narrow_hi, args.n_sweep))
-  eps = (alpha_hi - alpha_lo) * 1e-3
-  full_targets = list(np.linspace(alpha_lo + eps, alpha_hi - eps, args.n_sweep))
+  eps = (beta_hi - beta_lo) * 1e-3
+  full_targets = list(np.linspace(beta_lo + eps, beta_hi - eps, args.n_sweep))
 
   for regime, targets in (('narrow (beta_0 +/- %.2f)' % args.narrow_window, narrow_targets),
                            ('full range', full_targets)):
     print(f'\n=== {regime}, {args.n_sweep}-point sweep ===')
-    rows = run_regime(a, b, targets)
+    rows = run_regime(a, f, targets)
     print(f'{"admissible":>11} {"size":>5} {"cert":>5} {"#supports":>10} {"#candidates":>12} '
           f'{"success%":>9} {"#flops":>8}')
     for cfg in _CONFIGS:
@@ -290,7 +290,7 @@ def main(argv=None) -> None:
       print(f'{marks[0]:>11} {marks[1]:>5} {marks[2]:>5} {_fmt(r["n_supports"]):>10} '
             f'{_fmt(r["n_candidates"]):>12} {r["success_pct"]:>8.0f}% {_fmt(r["flops"]):>8}')
 
-    inv = count_invocations(a, b, targets)
+    inv = count_invocations(a, f, targets)
     print(f'Theorem invocations (all pruning on): admissible={_fmt(inv["admissible"])}, '
           f'size_pruning={inv["size_pruning"]}, certificate={inv["certificate"]}')
 

@@ -3,7 +3,7 @@
 Code for the WMT2026 paper **"Mind Which Bird You Favour: Parameterizing
 Adequacy–Fluency Balance in Meta-Evaluation of Machine Translation."**
 
-Machine translation meta-evaluation (scoring automatic MT metrics against
+Machine translation meta-evaluation (evaluating automatic MT scorers against
 human judgment) inherits a hidden adequacy–fluency balance from whichever
 translation systems happen to be in the evaluation pool. This project:
 
@@ -18,11 +18,12 @@ translation systems happen to be in the evaluation pool. This project:
    system-synthesis approaches, and to sweep popular scorers (MetricX,
    xCOMET, ...) across the reachable β range.
 
-**Naming note:** the code predates the paper's final β notation and calls
-this parameter `alpha` throughout (`mwb/lib/alpha.py`). Wherever this
-codebase says "alpha," it means the paper's β. The code's own `beta`
-(`alpha_to_beta`/`beta_to_alpha`) is a *different* quantity — the paper's
-footnote reparameterization β_std — and does not appear in any paper table.
+**Naming note:** the code calls the paper's β `beta` throughout
+(`mwb/lib/beta.py`), matching the paper directly. The paper's `a`/`f`
+(adequacy/fluency) are likewise `a`/`f` in code. A separate, unrelated
+quantity — the paper's footnote reparameterization β_std — lives in the
+same module as `beta_to_beta_std`/`beta_std_to_beta`; it does not appear in
+any paper table.
 
 ## Setup
 
@@ -55,14 +56,14 @@ standalone as `python -m mwb.scripts.<name>` with its own, more detailed
 |---|---|
 | Figure 1 (adequacy vs. fluency scatter) | `python cli.py af-scatter` |
 | Figure 2 (SPA plane, synthetic families) | `python cli.py spa-plane-synthetic` |
-| Figure 3 (main results) | `python cli.py orientation-compute -- --dataset ende21` then `python cli.py orientation-synth25 -- --dataset ende21` then `python cli.py orientation-plot -- --dataset ende21` |
+| Figure 3 (main results) | `python cli.py preference-compute -- --dataset ende21` then `python cli.py preference-synth25 -- --dataset ende21` then `python cli.py preference-plot -- --dataset ende21` |
 | Figure 4 (β–ESS preference heatmap) | `python cli.py beta-ess-heatmap -- --dataset ende21` |
-| Figure 5 (weighted meta-evaluation of popular scorers) | `python cli.py spa-vs-alpha-compute -- --dataset zhen23` then `python cli.py spa-vs-alpha-plot` |
-| Figure 6 (LOO stability vs. β) | `python cli.py loo-tau-vs-alpha-compute -- --dataset zhen23` then `python cli.py loo-tau-vs-alpha-plot` |
+| Figure 5 (weighted meta-evaluation of popular scorers) | `python cli.py spa-vs-beta-compute -- --dataset zhen23` then `python cli.py spa-vs-beta-plot` |
+| Figure 6 (LOO stability vs. β) | `python cli.py loo-tau-vs-beta-compute -- --dataset zhen23` then `python cli.py loo-tau-vs-beta-plot` |
 | Table `dataset_tau` (Appendix, LOO stability) | `python cli.py loo-tau` |
 | Tables `solve-exact-operation-counts` / `solve-exact-theorem-invocations` (Appendix, solver efficiency) | `python cli.py solver-efficiency -- --dataset ende24` |
 | Appendix "Dataset Statistics" (4 tables) | `python cli.py dataset-stats` |
-| Appendix pearson-correlation results | add `--metametric pearson` to the `orientation-*` commands above |
+| Appendix pearson-correlation results | add `--metametric pearson` to the `preference-*` commands above |
 
 Run `python cli.py --help` for the full command list, including
 `validate-scores` (checks the reconstructed MQM scores against the official
@@ -119,22 +120,22 @@ are specific cases of a more general dial-based construction in
 
 | Paper family | Implementation |
 |---|---|
-| MQM-adherence | `donor_family_additive_mean` dialed on the AllMQM ("T") aspect |
-| Adequacy–fluency | `donor_family_additive_mean_diagonal` (dial on adequacy, `-`dial on fluency, simultaneously) |
-| Explainability-by-MQM | `donor_family_joint` (the `'offset'` method's group-mean decomposition, conditioned on the *joint* (adequacy, fluency) pair) |
+| MQM-adherence | `base_scorer_family_additive_mean` dialed on the AllMQM ("T") aspect |
+| Adequacy–fluency | `base_scorer_family_additive_mean_af` (dial on adequacy, `-`dial on fluency, simultaneously) |
+| Explainability-by-MQM | `base_scorer_family_joint` (the `'offset'` method's group-mean decomposition, conditioned on the *joint* (adequacy, fluency) pair) |
 
 The paper's footnote to the MQM-adherence family also describes two more,
 single-aspect variants it excludes from the main analysis ("the partial
 correlation between the two aspects confounds their interpretation"):
-`donor_family_adequacy_adherence` and `donor_family_fluency_adherence`,
+`base_scorer_family_adequacy_adherence` and `base_scorer_family_fluency_adherence`,
 the same construction retargeted at Adequacy MQM or Fluency MQM alone
 instead of AllMQM. Supported as named functions for anyone who wants to
 run that excluded comparison themselves; not wired into the `cli.py`
 pipeline, since the paper reports no figure or table for them.
 
-Every family shares a `dial=0` anchor (the real donor scorer, unchanged);
+Every family shares a `dial=0` anchor (the real base scorer, unchanged);
 larger `|dial|` moves further toward (or past) the family's target
-endpoint. `mwb/lib/synthetic_scorer_orientation.py`'s `orientation_score`
+endpoint. `mwb/lib/synthetic_scorer_preference.py`'s `preference_score`
 is the shared reduction — the fraction of same-family dial pairs where a
 given meta-metric prefers the more extreme dial — that all three of the
 paper's family-specific measures (adequacy-over-fluency preference, MQM

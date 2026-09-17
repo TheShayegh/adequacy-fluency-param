@@ -10,7 +10,7 @@ for the tradeoff and for the measured agreement between the two.
 See mwb/lib/beta_ess_preference_grid.py's module docstring for the method and,
 in particular, for why this is affordable (weighted SPA is a ratio of two
 quadratic forms in w, so every SPA value in the run is one entry of a single
-dense matrix product; the permutation tests run once per (donor, dial), never
+dense matrix product; the permutation tests run once per (base scorer, dial), never
 per weight).
 
 Unlike every other beta experiment in this project, NOTHING here is
@@ -68,7 +68,7 @@ Usage:
       --dataset ende24 [--grid-n 32] [--ess-bins 8] [--beta-bins 8] \
       [--ess-lo-frac 0.5] [--beta-lo 0.5 --beta-hi 1.0] [--max-per-cell N]
 
-Writes into output/beta_ess_preference/ (see its README):
+Writes into output/:
 <tag>.{pdf,png} for the figure, <tag>_cells.md for the cell diagnostic
 table, and <tag>.npz caching the binned statistics. <tag> defaults to
 <dataset>_simplex<n_samples>k, or <dataset>_n<grid_n> under --sampler
@@ -87,15 +87,15 @@ import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Polygon
 
-from mwb.lib.alpha import alpha_0
+from mwb.lib.beta import beta_0
 from mwb.lib.beta_ess_preference_grid import (
-    bin_cells, build_proposal_alphas, lattice_beta_ess, lattice_size, load_donor_tables,
+    bin_cells, build_proposal_alphas, lattice_beta_ess, lattice_size, load_base_scorer_tables,
     max_lattice_ess, preference_scores, sample_simplex_beta_ess, weighted_mean_std)
 from mwb.lib.consistency import real_scorers, real_systems
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-ARTIFACTS = os.path.join(ROOT, 'output', 'beta_ess_preference')
+ARTIFACTS = os.path.join(ROOT, 'output')
 
 # Colormap stops, low -> high, evenly spaced over [0, 1]:
 #   0.00 yellow | 0.25 red | 0.50 purple | 0.75 blue | 1.00 black
@@ -139,9 +139,9 @@ PREFERENCE_CMAP = LinearSegmentedColormap.from_list(
 # and nothing below this block needs editing to restyle the figure.
 #
 # Font sizes and pads follow mwb/scripts/plot_af_scatter_heen23_jazh24.py
-# (the paper's Figure 1, output/outliers/Figure1.pdf), and
+# (the paper's Figure 1, output/af_scatter_heen23_jazh24.pdf), and
 # FIG_WIDTH matches that figure's own width so the two sit at the same scale
-# in the paper. The colorbar label placement follows plot_loo_tau_vs_alpha_
+# in the paper. The colorbar label placement follows plot_loo_tau_vs_beta_
 # combo.py's reliability strip (rotation 270 + labelpad, label on the right),
 # which puts the label tight against the bar instead of floating off it.
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ FIG_HEIGHT = 34.0           # generous; the square box below plus bbox_inches='t
 # FIGURE still yields a wider-than-tall grid. set_box_aspect constrains the
 # axes rectangle itself; FIG_HEIGHT is then only an upper bound, and
 # bbox_inches='tight' trims the slack. Same approach as
-# plot_loo_tau_vs_alpha_combo.py's own square panels. None disables it.
+# plot_loo_tau_vs_beta_combo.py's own square panels. None disables it.
 BOX_ASPECT = 1.0
 
 LABEL_FONTSIZE = 64         # axis titles
@@ -332,7 +332,7 @@ def draw(stats, beta_edges, ess_edges, title, out_base, formats=('pdf', 'png')):
   cb.set_ticks(list(CBAR_TICKS))
   cb.ax.set_yticklabels(list(CBAR_TICKLABELS), fontsize=CBAR_TICK_FONTSIZE)
   # Label on the right of the bar, rotated and pulled in by labelpad -- the
-  # plot_loo_tau_vs_alpha_combo.py reliability-strip convention.
+  # plot_loo_tau_vs_beta_combo.py reliability-strip convention.
   cb.ax.set_ylabel(CBAR_LABEL, fontsize=CBAR_LABEL_FONTSIZE,
                    rotation=CBAR_LABEL_ROTATION, labelpad=CBAR_LABEL_PAD)
   cb.ax.yaxis.set_label_position('right')
@@ -445,9 +445,9 @@ if __name__ == '__main__':
     sys.exit(f'{args.dataset}: no systems under the project outlier screen')
   K = len(systems)
   sys_df = load_system_scores(args.dataset, root=ROOT).loc[systems]
-  a, f = sys_df['a'].values, sys_df['b'].values
-  b0 = alpha_0(a, f)
-  print(f'{args.dataset}: K={K}, beta_0={b0:.4f}', file=sys.stderr)
+  a, f = sys_df['a'].values, sys_df['f'].values
+  beta0 = beta_0(a, f)
+  print(f'{args.dataset}: K={K}, beta_0={beta0:.4f}', file=sys.stderr)
 
   # --- 1. ESS window, then stream the lattice through it. ---------------
   grid_n = args.grid_n if args.grid_n is not None else K
@@ -563,17 +563,17 @@ if __name__ == '__main__':
   keep = np.concatenate(keep) if keep else np.array([], dtype=np.int64)
   print(f'scoring {len(keep):,} points (cap {args.max_per_cell or "none"} per cell)', file=sys.stderr)
 
-  # --- 4. Donor p-value tables (the expensive, w-independent step). -----
-  donors = real_scorers(args.dataset, root=ROOT, systems=systems, require_seg_scores=True)
+  # --- 4. Base scorer p-value tables (the expensive, w-independent step). -----
+  base_scorers = real_scorers(args.dataset, root=ROOT, systems=systems, require_seg_scores=True)
   t1 = time.time()
 
   def don_prog(i, n, name, ok):
-    print(f'  donor {i}/{n} {name}{"" if ok else " (SKIPPED)"}      ', file=sys.stderr, end='\r')
+    print(f'  base_scorer {i}/{n} {name}{"" if ok else " (SKIPPED)"}      ', file=sys.stderr, end='\r')
 
-  tables = load_donor_tables(args.dataset, systems, donors, root=ROOT, progress=don_prog)
+  tables = load_base_scorer_tables(args.dataset, systems, base_scorers, root=ROOT, progress=don_prog)
   if not tables:
-    sys.exit(f'{args.dataset}: no usable donors')
-  print(f'\n{len(tables)} donors x {tables[0].diffs.shape[0]} dials '
+    sys.exit(f'{args.dataset}: no usable base_scorers')
+  print(f'\n{len(tables)} base_scorers x {tables[0].diffs.shape[0]} dials '
         f'({time.time() - t1:.1f}s)', file=sys.stderr)
 
   # --- 5. Score, then aggregate per cell. -------------------------------
@@ -602,13 +602,13 @@ if __name__ == '__main__':
   base = os.path.join(ARTIFACTS, f'beta_ess_preference_{tag}')
 
   paths = draw({'mean': mean, 'std': std, 'count': counts}, beta_edges, ess_edges,
-               f'{args.dataset}  (K={K}, $\\beta_0$={b0:.3f}, '
+               f'{args.dataset}  (K={K}, $\\beta_0$={beta0:.3f}, '
                + (f'lattice n={grid_n})' if args.sampler == 'lattice'
                   else f'simplex IS, {n_total / 1e6:.1f}M draws)'), base)
 
   np.savez(base + '.npz', mean=mean, std=std, counts=counts, scored=scored, n_eff=n_eff,
-           beta_edges=beta_edges, ess_edges=ess_edges, K=K, beta_0=b0,
-           dataset=args.dataset, grid_n=grid_n, n_donors=len(tables), sampler=args.sampler)
+           beta_edges=beta_edges, ess_edges=ess_edges, K=K, beta_0=beta0,
+           dataset=args.dataset, grid_n=grid_n, n_base_scorers=len(tables), sampler=args.sampler)
 
   if args.save_points:
     keep_pts = np.flatnonzero(np.isfinite(pref))
@@ -623,7 +623,7 @@ if __name__ == '__main__':
              cov=(np.full(len(keep_pts), np.nan, np.float32) if cov_all is None
                   else cov_all[keep][keep_pts].astype(np.float32)),
              wmax=xs[keep][keep_pts].max(axis=1).astype(np.float32),
-             dataset=args.dataset, K=K, beta_0=b0, sampler=args.sampler)
+             dataset=args.dataset, K=K, beta_0=beta0, sampler=args.sampler)
     print(f'saved {len(keep_pts):,} individual weightings to {base}_points.npz', file=sys.stderr)
 
   md = base + '_cells.md'

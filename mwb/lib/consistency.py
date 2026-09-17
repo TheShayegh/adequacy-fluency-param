@@ -1,5 +1,5 @@
 """Cross-dataset scorer-ranking consistency: for a chosen meta-metric,
-score every available automatic metric (scorer) against the human ranking
+score every available scorer against the human ranking
 within each dataset, then measure how consistent those per-dataset
 scorer-rankings are with each other.
 
@@ -22,8 +22,8 @@ import numpy as np
 import pandas as pd
 
 from mwb.lib.metametrics import METAMETRICS, WEIGHTED_METAMETRICS, NEEDS_SEGMENT_SCORES, MetaEvalInput
-from mwb.lib.metric_scores import (
-    load_metric_sys_scores, load_human_seg_scores, load_metric_seg_scores,
+from mwb.lib.scorer_score_files import (
+    load_scorer_sys_scores, load_human_seg_scores, load_scorer_seg_scores,
     jointly_valid_columns,
 )
 from mwb.lib.outlier_detection import wmt_official_outliers, wmt_non_competative_outliers
@@ -31,14 +31,14 @@ from mwb.lib.systems import is_reference_or_human
 from mwb.mqm_scoring import load_system_scores
 
 # SPA's permutation test is unreliable with too few shared, fully-covered
-# segments; below this we skip the (dataset, metric) cell rather than trust
+# segments; below this we skip the (dataset, scorer) cell rather than trust
 # a noisy p-value.
 _MIN_SPA_SEGMENTS = 10
 
 # Datasets missing GRANULAR (line-position-indexed) segment-level Adequacy/
 # Fluency MQM: mwb.mqm_scoring's raw-TSV seg_id for these is a per-document
 # index, not a global line position in the source file, so it cannot be
-# positionally reconciled with automatic-metric segment-score files
+# positionally reconciled with automatic-scorer segment-score files
 # (mwb.lib.spa_plane.positional_af_matrices's self-check found 0.35 correlation
 # for enru22 vs. 0.99+ for every other raw-TSV/official-ratings dataset --
 # i.e. genuinely misaligned, not just noisy). This ONLY breaks analyses that
@@ -81,7 +81,7 @@ def real_systems(
   """Sorted real (non-reference/human) system names for a dataset -- the
   canonical ordering scorer_scores() uses internally, and the ordering any
   caller passing an explicit weight vector `w` to scorer_scores must use to
-  build it (e.g. mwb.lib.reweight_exact.solve_w_exact(a, b, alpha) with a,b
+  build it (e.g. mwb.lib.reweight_exact.solve_w_exact(a, f, beta) with a,f
   built in this same order).
 
   exclude_outliers (default True): THE PROJECT STANDARD as of this
@@ -106,9 +106,9 @@ def real_systems(
   official's own outlier metadata doesn't flag (a different concern --
   wmt_official is about ranking-quality outliers, this is about roster
   membership). Tried as a project-wide default in this session -- the
-  scorer-orientation investigation that surfaced it found solve_w_exact's
+  scorer-preference investigation that surfaced it found solve_w_exact's
   optimal support pivoting onto zhen21's 5 metricsystemN placeholders
-  (K=13, so >1/3 of the whole roster) around alpha~0.71-0.85 -- but the
+  (K=13, so >1/3 of the whole roster) around beta~0.71-0.85 -- but the
   result of turning it on by default project-wide wasn't good, so it's
   back to opt-in, off by default, rather than folded into exclude_outliers.
 
@@ -144,10 +144,10 @@ def real_scorers(
     require_seg_scores: bool = False, exclude_degenerate: bool = True,
     deduplicate: bool = True,
 ) -> list[str]:
-  """Sorted usable scorer (automatic metric) names for a dataset -- the
+  """Sorted usable scorer names for a dataset -- the
   scorer-side analogue of real_systems(), which screens the OTHER axis of
   the same rectangle. Neither implies the other: real_systems drops
-  translation systems (outliers, excluded datasets), this drops metrics.
+  translation systems (outliers, excluded datasets), this drops scorers.
 
   systems: the roster to evaluate the scorers against; defaults to
   real_systems(dataset) with excl_missing_seg_granular_mqm tied to
@@ -160,7 +160,7 @@ def real_scorers(
   tune. Currently this is exactly WMT24's `sentinel-ref-mqm` and
   `sentinel-src-mqm` in ende24/enes24/jazh24, which score the reference or
   the source alone and ignore the candidate translation entirely (they
-  exist to expose metric artifacts, and are not metrics of translation
+  exist to expose scoring artifacts, and do not measure translation
   quality). `sentinel-cand-mqm` does score the candidate and is NOT
   degenerate, so it survives -- which is why this is a data test rather
   than a name blacklist. Such scorers make every ratio-to-baseline
@@ -174,7 +174,7 @@ def real_scorers(
   level the caller will actually read -- segment matrices when
   require_seg_scores, system score vectors otherwise -- because the two
   disagree: a .sys.score file is supplied by the submitter, not recomputed
-  as the mean of that metric's own .seg.score file, so enes24's
+  as the mean of that scorer's own .seg.score file, so enes24's
   metametrics_mt_mqm_kendall matches metametrics_mt_mqm_hybrid_kendall
   segment-for-segment while their system vectors differ.
 
@@ -192,7 +192,7 @@ def real_scorers(
   if not systems:
     return []
 
-  sys_scores = load_metric_sys_scores(dataset, systems, root=root)
+  sys_scores = load_scorer_sys_scores(dataset, systems, root=root)
   names = sorted(sys_scores)
 
   if exclude_degenerate:
@@ -204,7 +204,7 @@ def real_scorers(
   seg = {}
   if require_seg_scores:
     for s in names:
-      m = load_metric_seg_scores(dataset, s, systems, root=root)
+      m = load_scorer_seg_scores(dataset, s, systems, root=root)
       if m is not None and m.shape[0] == len(systems) and not np.isnan(m).all():
         seg[s] = m
     names = [s for s in names if s in seg]
@@ -226,12 +226,12 @@ def load_scorer_inputs(
     dataset: str, metametric_name: str, root: str = '.', systems: list[str] | None = None,
 ) -> dict[str, MetaEvalInput]:
   """The expensive, weighting-independent I/O step of scorer_scores
-  (parsing human/metric score files off disk), factored out so callers
+  (parsing human/scorer score files off disk), factored out so callers
   evaluating many different weightings at fixed (dataset, metametric) --
-  e.g. an alpha grid, mwb.lib.reweighted_consistency -- can do it once and
-  reuse it rather than re-reading every score file per alpha. Returns
-  scorer name -> MetaEvalInput (human_sys/metric_sys, and for SPA the
-  already-jointly-masked human_seg/metric_seg); no weight is applied here.
+  e.g. an beta grid, mwb.lib.reweighted_consistency -- can do it once and
+  reuse it rather than re-reading every score file per beta. Returns
+  scorer name -> MetaEvalInput (human_sys/scorer_sys, and for SPA the
+  already-jointly-masked human_seg/scorer_seg); no weight is applied here.
 
   systems: defaults to all of `dataset`'s real systems (real_systems); pass
   an explicit subset to restrict to it instead -- e.g. a leave-some-out
@@ -241,24 +241,24 @@ def load_scorer_inputs(
     systems = real_systems(dataset, root=root)
   sys_df = load_system_scores(dataset, root=root)
   human_sys = sys_df.loc[systems, 't'].values
-  metric_series = load_metric_sys_scores(dataset, systems, root=root)
+  scorer_series = load_scorer_sys_scores(dataset, systems, root=root)
 
   needs_seg = metametric_name in NEEDS_SEGMENT_SCORES
   human_seg = load_human_seg_scores(dataset, systems, root=root) if needs_seg else None
 
   inputs = {}
-  for name, series in metric_series.items():
+  for name, series in scorer_series.items():
     m = series.reindex(systems).values
     if needs_seg:
       if human_seg is None:
         continue
-      metric_seg = load_metric_seg_scores(dataset, name, systems, root=root)
-      if metric_seg is None:
+      scorer_seg = load_scorer_seg_scores(dataset, name, systems, root=root)
+      if scorer_seg is None:
         continue
-      mask = jointly_valid_columns(human_seg, metric_seg)
+      mask = jointly_valid_columns(human_seg, scorer_seg)
       if mask.sum() < _MIN_SPA_SEGMENTS:
         continue
-      inputs[name] = MetaEvalInput(human_sys, m, human_seg[:, mask], metric_seg[:, mask])
+      inputs[name] = MetaEvalInput(human_sys, m, human_seg[:, mask], scorer_seg[:, mask])
     else:
       inputs[name] = MetaEvalInput(human_sys, m)
   return inputs
@@ -282,7 +282,7 @@ def scorer_scores(
     dataset: str, metametric_name: str, root: str = '.', w: np.ndarray | None = None,
     systems: list[str] | None = None,
 ) -> pd.Series:
-  """Metric name -> meta-metric value against the human All-MQM ranking,
+  """Scorer name -> meta-metric value against the human All-MQM ranking,
   for every scorer with full, numeric coverage of `systems` (default: all
   of this dataset's real, non-reference systems -- real_systems).
 
@@ -291,7 +291,7 @@ def scorer_scores(
   uses the unweighted meta-metric (METAMETRICS, equivalent to uniform
   weight); otherwise uses the weighted counterpart (WEIGHTED_METAMETRICS)
   under that weighting -- e.g. w = mwb.lib.reweight_exact.solve_w_exact(a,
-  b, alpha).w for an M(alpha)-curve point.
+  f, beta).w for an M(beta)-curve point.
 
   One-shot convenience wrapping load_scorer_inputs + evaluate_scorer_
   scores; callers evaluating many weightings at fixed (dataset,
@@ -321,7 +321,7 @@ def pool_weighted_tau(
   one Kendall's tau pooled over every (scorer-pair, dataset-pair)
   comparison, tau-a convention (see module docstring). Shared by
   weighted_consistency (unweighted/baseline rankings) and
-  mwb.lib.reweighted_consistency (rankings under w(alpha))."""
+  mwb.lib.reweighted_consistency (rankings under w(beta))."""
   datasets = list(rankings) if datasets is None else datasets
   pair_results = []
   total_num = 0

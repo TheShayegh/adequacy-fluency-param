@@ -45,7 +45,7 @@ shrinking pool, dropping every system flagged in one pass before
 recomputing on what's left, until a pass flags nothing. The same iteration
 pattern is reused for the joint/GK version below.
 
-Three more, all hand-curated (NOT statistical detectors, no (a,b) score
+Three more, all hand-curated (NOT statistical detectors, no (a,f) score
 ever enters them):
 
 wmt_non_competative_outliers -- a fixed per-dataset lookup table
@@ -114,7 +114,7 @@ def iterative_single_aspect_outliers(
 
 
 def iterative_single_aspect_outliers_either(
-    systems: list[str], a: np.ndarray, b: np.ndarray, threshold: float = DEFAULT_THRESHOLD,
+    systems: list[str], a: np.ndarray, f: np.ndarray, threshold: float = DEFAULT_THRESHOLD,
 ) -> list[tuple[str, str, float, int]]:
   """SIMPLIFIED, NON-STANDARD, like iterative_single_aspect_outliers: looks
   at adequacy and fluency SEPARATELY (one aspect at a time) and unions the
@@ -127,7 +127,7 @@ def iterative_single_aspect_outliers_either(
   iterative_single_aspect_outliers (this function's single-aspect sibling)
   applies this only to adequacy; this is the two-aspect version: each pass
   recomputes modified z-scores for BOTH
-  a and b on the remaining pool, flags the UNION of systems over threshold
+  a and f on the remaining pool, flags the UNION of systems over threshold
   on either one, removes them all at once, and repeats until a pass flags
   nothing on both. Masking-resistant across aspects as well as within one:
   a system whose adequacy z-score is only borderline can still get
@@ -140,24 +140,24 @@ def iterative_single_aspect_outliers_either(
   descending within an (iteration, aspect) group, adequacy before fluency
   at a tie -- deterministic, not semantically load-bearing."""
   a = np.asarray(a, dtype=float)
-  b = np.asarray(b, dtype=float)
+  f = np.asarray(f, dtype=float)
   remaining_systems = list(systems)
   remaining_a = a.copy()
-  remaining_b = b.copy()
+  remaining_f = f.copy()
   removed = []
   iteration = 1
   while True:
     flagged_a = mad_outliers(remaining_systems, remaining_a, threshold=threshold)
-    flagged_b = mad_outliers(remaining_systems, remaining_b, threshold=threshold)
-    if not flagged_a and not flagged_b:
+    flagged_f = mad_outliers(remaining_systems, remaining_f, threshold=threshold)
+    if not flagged_a and not flagged_f:
       return removed
     removed.extend((s, 'adequacy', z, iteration) for s, z in flagged_a)
-    removed.extend((s, 'fluency', z, iteration) for s, z in flagged_b)
-    flagged_names = {s for s, _ in flagged_a} | {s for s, _ in flagged_b}
+    removed.extend((s, 'fluency', z, iteration) for s, z in flagged_f)
+    flagged_names = {s for s, _ in flagged_a} | {s for s, _ in flagged_f}
     keep = [i for i, s in enumerate(remaining_systems) if s not in flagged_names]
     remaining_systems = [remaining_systems[i] for i in keep]
     remaining_a = remaining_a[keep]
-    remaining_b = remaining_b[keep]
+    remaining_f = remaining_f[keep]
     iteration += 1
     if len(remaining_systems) < 2:
       return removed
@@ -242,8 +242,7 @@ def iterative_gk_outliers(
   than half their pool (9/12 and 8/15) across a few iterations each. This
   isn't a bug to fix by raising the threshold further on a per-dataset
   basis (that would be tuning the screen to the answer, exactly what this
-  detector is meant to avoid) -- see output/outliers/README.md
-  for the full per-dataset numbers and how to read them."""
+  detector is meant to avoid)."""
   systems = list(systems)
   x = np.asarray(x, dtype=float)
   y = np.asarray(y, dtype=float)

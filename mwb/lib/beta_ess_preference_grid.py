@@ -2,7 +2,7 @@
 the math for mwb/scripts/compute_beta_ess_preference_heatmap.py.
 
 The question this answers is NOT the one the rest of the project asks. Every
-other alpha/beta experiment here solves (P) -- given a target beta, find the
+other beta experiment here solves (P) -- given a target beta, find the
 min-collision (max-ESS) weighting that realizes it exactly (mwb.lib.
 reweight_exact). This module optimizes NOTHING. It covers the simplex
 {w : sum(w)=1, w >= 0} and treats each w purely as an observation: it
@@ -38,7 +38,7 @@ the simplex conditioned on the cell).
 WHY THIS IS AFFORDABLE (the whole design rests on this)
 -------------------------------------------------------
 Naively, each lattice point needs a full weighted-SPA sweep over every dial
-of every donor -- hopeless at millions of points. But weighted SPA is a
+of every base scorer -- hopeless at millions of points. But weighted SPA is a
 RATIO OF TWO QUADRATIC FORMS in w. From mwb.lib.metametrics.
 soft_pairwise_accuracy_from_pvalues:
 
@@ -47,7 +47,7 @@ soft_pairwise_accuracy_from_pvalues:
 
 The pairwise p-values p_h, p_s do not depend on w at all (each pair's
 permutation test looks only at those two systems' segment scores -- see
-pairwise_p_values' own docstring). So per (donor, dial) the vector
+pairwise_p_values' own docstring). So per (base scorer, dial) the vector
 
     d_m = ( |p_h[k,k'] - p_s[k,k']| )_{k<k'}      (length P = K(K-1)/2)
 
@@ -57,31 +57,31 @@ is FIXED, and per lattice point the vector
 
 is fixed. Every SPA value in the entire experiment is then one entry of a
 single dense matrix product Q @ D.T -- which BLAS does at full speed. The
-permutation tests (the genuinely expensive part) run once per (donor, dial),
+permutation tests (the genuinely expensive part) run once per (base scorer, dial),
 never per weight.
 
 WHAT THE PREFERENCE SCORE IS
 ----------------------------
-The paper's adequacy-over-fluency preference: the Diagonal dial family
-(mwb.lib.synthetic_scorers.donor_family_additive_mean_diagonal -- A = +dial,
-B = -dial, so increasing dial trades fluency signal for adequacy signal),
-reduced by mwb.lib.synthetic_scorer_orientation.orientation_score -- the fraction
+The paper's adequacy-over-fluency preference: the Adequacy-fluency dial family
+(mwb.lib.synthetic_scorers.base_scorer_family_additive_mean_af -- A = +dial,
+F = -dial, so increasing dial trades fluency signal for adequacy signal),
+reduced by mwb.lib.synthetic_scorer_preference.preference_score -- the fraction
 of dial-adjacent pairs where the weighted meta-metric prefers the
 more-adequacy-leaning scorer. 1.0 = always prefers adequacy, 0.0 = always
-fluency, 0.5 = no preference. Averaged over every base scorer (donor) of the
+fluency, 0.5 = no preference. Averaged over every base scorer of the
 dataset, exactly as the main results are.
 
 Note this family is deliberately NOT routed through mwb.lib.synthetic_scorer_
-alpha_grid.donor_alpha_dial_grid, which only builds A/B plus T-or-J and has
-no Diagonal option; the generator is called directly instead.
+beta_grid.base_scorer_beta_dial_grid, which only builds A/F plus T-or-J and has
+no Adequacy-fluency option; the generator is called directly instead.
 
 VALIDITY MASK
 -------------
 pairwise_p_values returns NaN off the upper triangle by construction, and
-can in principle return NaN within it. The mask is taken ONCE PER DONOR (the
-pairs finite in p_human and in every one of that donor's dials), not per
-dial, so the SPA denominator is identical across a donor's dials and the
-orientation comparison between two dials is never contaminated by the two
+can in principle return NaN within it. The mask is taken ONCE PER BASE SCORER (the
+pairs finite in p_human and in every one of that base scorer's dials), not per
+dial, so the SPA denominator is identical across a base scorer's dials and the
+preference comparison between two dials is never contaminated by the two
 being averaged over different pair sets.
 """
 
@@ -94,9 +94,9 @@ import numpy as np
 import torch
 
 from mwb.lib.metametrics import pairwise_p_values
-from mwb.lib.metric_scores import load_human_seg_scores, load_metric_seg_scores
+from mwb.lib.scorer_score_files import load_human_seg_scores, load_scorer_seg_scores
 from mwb.lib.spa_plane import DEFAULT_NUM_PERMUTATIONS, DEFAULT_SEED, positional_af_matrices
-from mwb.lib.synthetic_scorers import DIAGONAL_ADDITIVE_MEAN_DIAL_GRID, donor_family_additive_mean_diagonal
+from mwb.lib.synthetic_scorers import AF_ADDITIVE_MEAN_DIAL_GRID, base_scorer_family_additive_mean_af
 from mwb.lib.reweight_exhaustive import _binom_table, _simplex_lattice_chunk
 
 # _simplex_lattice_chunk/_binom_table are imported rather than reimplemented:
@@ -108,14 +108,14 @@ from mwb.lib.reweight_exhaustive import _binom_table, _simplex_lattice_chunk
 
 
 @dataclasses.dataclass
-class DonorPValues:
-  """One donor's fixed, w-independent SPA ingredients.
+class BaseScorerPValues:
+  """One base scorer's fixed, w-independent SPA ingredients.
 
   diffs: (n_dials, P) -- |p_human - p_dial| over the P valid system pairs,
          rows in ascending dial order.
   valid_pairs: (P,) int index into the K(K-1)/2 upper-triangle pair list.
   """
-  donor: str
+  base_scorer: str
   diffs: np.ndarray
   valid_pairs: np.ndarray
 
@@ -124,29 +124,29 @@ def _upper_tri_pairs(K: int) -> tuple[np.ndarray, np.ndarray]:
   return np.triu_indices(K, 1)
 
 
-def donor_pvalue_table(
-    dataset: str, donor: str, systems: list[str], a_pos: np.ndarray, b_pos: np.ndarray,
-    human_seg: np.ndarray, dial_grid=DIAGONAL_ADDITIVE_MEAN_DIAL_GRID, root: str = '.',
+def base_scorer_pvalue_table(
+    dataset: str, base_scorer: str, systems: list[str], a_pos: np.ndarray, f_pos: np.ndarray,
+    human_seg: np.ndarray, dial_grid=AF_ADDITIVE_MEAN_DIAL_GRID, root: str = '.',
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
     min_segments: int = 10,
-) -> DonorPValues | None:
-  """Build one donor's Diagonal family and run its per-dial permutation
-  tests -- the expensive step, done once per donor for the whole experiment.
-  None if the donor lacks the joint segment coverage (same gate as
-  donor_alpha_dial_grid)."""
-  donor_seg = load_metric_seg_scores(dataset, donor, systems, root=root)
-  if donor_seg is None or donor_seg.shape[1] != a_pos.shape[1]:
+) -> BaseScorerPValues | None:
+  """Build one base scorer's Adequacy-fluency family and run its per-dial permutation
+  tests -- the expensive step, done once per base scorer for the whole experiment.
+  None if the base scorer lacks the joint segment coverage (same gate as
+  base_scorer_beta_dial_grid)."""
+  base_scorer_seg = load_scorer_seg_scores(dataset, base_scorer, systems, root=root)
+  if base_scorer_seg is None or base_scorer_seg.shape[1] != a_pos.shape[1]:
     return None
-  mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(b_pos).any(axis=0)
-           | np.isnan(donor_seg).any(axis=0) | np.isnan(human_seg).any(axis=0))
+  mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(f_pos).any(axis=0)
+           | np.isnan(base_scorer_seg).any(axis=0) | np.isnan(human_seg).any(axis=0))
   if int(mask.sum()) < min_segments:
     return None
 
-  a_m, b_m = a_pos[:, mask], b_pos[:, mask]
-  donor_m, human_m = donor_seg[:, mask], human_seg[:, mask]
+  a_m, f_m = a_pos[:, mask], f_pos[:, mask]
+  base_scorer_m, human_m = base_scorer_seg[:, mask], human_seg[:, mask]
 
   p_human = pairwise_p_values(human_m, num_permutations, seed)
-  family = donor_family_additive_mean_diagonal(donor_m, a_m, b_m, dial_grid)
+  family = base_scorer_family_additive_mean_af(base_scorer_m, a_m, f_m, dial_grid)
   dials = sorted(family)
   p_dials = [pairwise_p_values(family[d], num_permutations, seed) for d in dials]
 
@@ -159,35 +159,35 @@ def donor_pvalue_table(
     return None
 
   diffs = np.stack([np.abs(p_human[iu][valid] - pd[iu][valid]) for pd in p_dials])
-  return DonorPValues(donor=donor, diffs=diffs, valid_pairs=valid)
+  return BaseScorerPValues(base_scorer=base_scorer, diffs=diffs, valid_pairs=valid)
 
 
-def load_donor_tables(
-    dataset: str, systems: list[str], donors: list[str], root: str = '.',
-    dial_grid=DIAGONAL_ADDITIVE_MEAN_DIAL_GRID,
+def load_base_scorer_tables(
+    dataset: str, systems: list[str], base_scorers: list[str], root: str = '.',
+    dial_grid=AF_ADDITIVE_MEAN_DIAL_GRID,
     num_permutations: int = DEFAULT_NUM_PERMUTATIONS, seed: int = DEFAULT_SEED,
     progress=None,
-) -> list[DonorPValues]:
-  """Every usable donor's DonorPValues for one dataset. Raises if the
+) -> list[BaseScorerPValues]:
+  """Every usable base scorer's BaseScorerPValues for one dataset. Raises if the
   dataset has no positional alignment or human segment scores at all (i.e.
   the whole experiment is impossible there -- enru22)."""
   pos = positional_af_matrices(dataset, systems, root=root)
   if pos is None:
-    raise ValueError(f'{dataset}: positional alignment unavailable; no donor can be built')
-  a_pos, b_pos = pos
+    raise ValueError(f'{dataset}: positional alignment unavailable; no base_scorer can be built')
+  a_pos, f_pos = pos
   human_seg = load_human_seg_scores(dataset, systems, root=root)
   if human_seg is None or human_seg.shape[1] != a_pos.shape[1]:
     raise ValueError(f'{dataset}: human segment scores unavailable or misaligned')
 
   out = []
-  for i, d in enumerate(donors):
-    tbl = donor_pvalue_table(dataset, d, systems, a_pos, b_pos, human_seg,
+  for i, d in enumerate(base_scorers):
+    tbl = base_scorer_pvalue_table(dataset, d, systems, a_pos, f_pos, human_seg,
                              dial_grid=dial_grid, root=root,
                              num_permutations=num_permutations, seed=seed)
     if tbl is not None:
       out.append(tbl)
     if progress is not None:
-      progress(i + 1, len(donors), d, tbl is not None)
+      progress(i + 1, len(base_scorers), d, tbl is not None)
   return out
 
 
@@ -302,14 +302,14 @@ def lattice_beta_ess(
 
 
 def preference_scores(
-    w: np.ndarray, tables: list[DonorPValues], K: int, chunk: int = 4096,
+    w: np.ndarray, tables: list[BaseScorerPValues], K: int, chunk: int = 4096,
 ) -> np.ndarray:
   """Adequacy-over-fluency preference for each row of `w` (n, K): for every
-  donor, weighted SPA at every dial via the Q @ D.T identity in this
-  module's docstring, reduced by the adjacent-pair orientation rule, then
-  averaged across donors.
+  base scorer, weighted SPA at every dial via the Q @ D.T identity in this
+  module's docstring, reduced by the adjacent-pair preference rule, then
+  averaged across base scorers.
 
-  Returns (n,) with NaN wherever no donor produced a finite score."""
+  Returns (n,) with NaN wherever no base scorer produced a finite score."""
   iu_i, iu_j = _upper_tri_pairs(K)
   n = w.shape[0]
   out = np.full(n, np.nan)
@@ -319,7 +319,7 @@ def preference_scores(
     # q[n, p] = w_k * w_k' for the p-th upper-triangle pair.
     q_full = W[:, iu_i] * W[:, iu_j]
 
-    per_donor = np.full((W.shape[0], len(tables)), np.nan)
+    per_base_scorer = np.full((W.shape[0], len(tables)), np.nan)
     for di, tbl in enumerate(tables):
       q = q_full[:, tbl.valid_pairs]
       den = q.sum(axis=1)
@@ -333,16 +333,16 @@ def preference_scores(
         spa = 1.0 - num / den[:, None]
       spa[den <= 0] = np.nan
 
-      # orientation_score, adjacent pairs, vectorized over weights: a win
+      # preference_score, adjacent pairs, vectorized over weights: a win
       # where the higher dial scores higher, half a win on an exact tie.
       lo, hi = spa[:, :-1], spa[:, 1:]
       wins = np.where(hi > lo, 1.0, np.where(hi == lo, 0.5, 0.0))
       wins[~(np.isfinite(lo) & np.isfinite(hi))] = np.nan
       with np.errstate(invalid='ignore'):
-        per_donor[:, di] = np.nanmean(wins, axis=1)
+        per_base_scorer[:, di] = np.nanmean(wins, axis=1)
 
     with np.errstate(invalid='ignore'):
-      out[start:start + chunk] = np.nanmean(per_donor, axis=1)
+      out[start:start + chunk] = np.nanmean(per_base_scorer, axis=1)
   return out
 
 

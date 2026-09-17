@@ -2,14 +2,13 @@
 reweighting optimization (Sec. "Reweighting as an Optimization Problem",
 Algorithm 1).
 
-(P): given real systems' score vectors a, b and a target balance alpha
-(the paper's beta -- see mwb.lib.alpha's module docstring), find the weights w
-closest to uniform (min 1/2 sum w_i^2) subject to sum(w) = 1, w >= 0, and
-alpha(w) = alpha exactly. (P) is nonconvex: the balance constraint is an
-indefinite quadratic in w for alpha in (0,1) (the matrix H in
-Theorem "Exit certificate"'s proof has one positive and one negative
-eigenvalue), so a naive local solve is not guaranteed to find the true
-optimum -- there exist instances where a KKT point is provably not
+(P): given real systems' score vectors a, f and a target balance beta,
+find the weights w closest to uniform (min 1/2 sum w_i^2) subject to
+sum(w) = 1, w >= 0, and beta(w) = beta exactly. (P) is nonconvex: the
+balance constraint is an indefinite quadratic in w for beta in (0,1) (the
+matrix H in Theorem "Exit certificate"'s proof has one positive and one
+negative eigenvalue), so a naive local solve is not guaranteed to find the
+true optimum -- there exist instances where a KKT point is provably not
 globally optimal (see tests/test_reweight_exact.py's adversarial K=4 case).
 
 This solver is proven both SOUND and COMPLETE -- every value it returns is
@@ -46,7 +45,7 @@ import itertools
 import numpy as np
 from scipy.optimize import brentq
 
-from mwb.lib.alpha import alpha as alpha_of, alpha_min_max, pairwise_alphas, weighted_mean
+from mwb.lib.beta import beta as beta_of, beta_min_max, pairwise_betas, weighted_mean
 
 _TOL = 1e-7
 _POLE_TOL = 1e-6
@@ -58,8 +57,8 @@ class ExactWResult:
   global optimum (soundness+completeness); `certified` records HOW that
   was established, not whether it's correct."""
   w: np.ndarray
-  alpha_target: float
-  alpha_achieved: float
+  beta_target: float
+  beta_achieved: float
   success: bool               # solver ran to completion and found a global optimum
   certified: bool              # True: an explicit Theorem "Exit certificate" (KKT+curvature) pass fired.
                                  # False: found via exhaustive-enumeration completeness instead -- still
@@ -73,12 +72,12 @@ class ExactWResult:
   message: str
 
 
-def _M_r(a: np.ndarray, b: np.ndarray, alpha: float) -> tuple[np.ndarray, np.ndarray]:
-  """M(alpha), r(alpha): the quadratic form and linear term of the balance
-  constraint b(w,alpha) = w^T M w + w^T r (Theorem "Bounded candidate
+def _M_r(a: np.ndarray, f: np.ndarray, beta: float) -> tuple[np.ndarray, np.ndarray]:
+  """M(beta), r(beta): the quadratic form and linear term of the balance
+  constraint b(w,beta) = w^T M w + w^T r (Theorem "Bounded candidate
   count"'s proof)."""
-  M = alpha * np.outer(b, b) - (1 - alpha) * np.outer(a, a)
-  r = (1 - alpha) * a ** 2 - alpha * b ** 2
+  M = beta * np.outer(f, f) - (1 - beta) * np.outer(a, a)
+  r = (1 - beta) * a ** 2 - beta * f ** 2
   return M, r
 
 
@@ -86,50 +85,50 @@ def _g(w: np.ndarray, M: np.ndarray, r: np.ndarray) -> float:
   return float(w @ M @ w + r @ w)
 
 
-def _d_all(w: np.ndarray, a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
-  """d_i(w,alpha) = the per-system gradient term of the balance constraint,
+def _d_all(w: np.ndarray, a: np.ndarray, f: np.ndarray, beta: float) -> np.ndarray:
+  """d_i(w,beta) = the per-system gradient term of the balance constraint,
   for EVERY system i (including ones outside w's support) -- needed for the
   Theorem "Exit certificate" KKT condition (ii), which must hold at every
   i not in the support."""
   mu_a = weighted_mean(a, w)
-  mu_b = weighted_mean(b, w)
-  return (1 - alpha) * (a ** 2 - 2 * mu_a * a) - alpha * (b ** 2 - 2 * mu_b * b)
+  mu_f = weighted_mean(f, w)
+  return (1 - beta) * (a ** 2 - 2 * mu_a * a) - beta * (f ** 2 - 2 * mu_f * f)
 
 
-def _prop1_2x2(a: np.ndarray, b: np.ndarray, alpha: float):
-  """Mean-centers a,b, returns rho, the norms, and the closed-form
+def _prop1_2x2(a: np.ndarray, f: np.ndarray, beta: float):
+  """Mean-centers a,f, returns rho, the norms, and the closed-form
   eigenstructure (theta1>0>theta2) of the 2x2 curvature block spanned by
-  the centered a,b directions -- shared by both the full-problem curvature
+  the centered a,f directions -- shared by both the full-problem curvature
   test (Theorem "Exit certificate" condition (iii)) and each support's
   candidate construction below."""
-  mu_a, mu_b = a.mean(), b.mean()
-  ta, tb = a - mu_a, b - mu_b
-  na, nb = float(np.linalg.norm(ta)), float(np.linalg.norm(tb))
-  rho = float(np.clip((ta @ tb) / (na * nb), -1.0, 1.0)) if na > 0 and nb > 0 else 0.0
-  T = alpha * nb ** 2 - (1 - alpha) * na ** 2
-  D = -alpha * (1 - alpha) * (1 - rho ** 2) * na ** 2 * nb ** 2
+  mu_a, mu_f = a.mean(), f.mean()
+  ta, tf = a - mu_a, f - mu_f
+  na, nf = float(np.linalg.norm(ta)), float(np.linalg.norm(tf))
+  rho = float(np.clip((ta @ tf) / (na * nf), -1.0, 1.0)) if na > 0 and nf > 0 else 0.0
+  T = beta * nf ** 2 - (1 - beta) * na ** 2
+  D = -beta * (1 - beta) * (1 - rho ** 2) * na ** 2 * nf ** 2
   disc = float(np.sqrt(max(T ** 2 - 4 * D, 0.0)))
   theta1 = (T + disc) / 2.0
   theta2 = (T - disc) / 2.0
-  return theta1, theta2, rho, ta, tb, na, nb
+  return theta1, theta2, rho, ta, tf, na, nf
 
 
-def _curvature_ok(a: np.ndarray, b: np.ndarray, alpha: float, eta: float, tol: float = _TOL) -> bool:
-  """Theorem "Exit certificate" condition (iii): v^T(I+2*eta*M(alpha))v >= 0
+def _curvature_ok(a: np.ndarray, f: np.ndarray, beta: float, eta: float, tol: float = _TOL) -> bool:
+  """Theorem "Exit certificate" condition (iii): v^T(I+2*eta*M(beta))v >= 0
   for every v with sum(v)=0, on the FULL K systems. Reduces to a 2x2
   positive-semidefinite test (tr H >= 0, det H >= 0) on the curvature
   block from _prop1_2x2, which degenerates correctly to the scalar |rho|=1
   case since theta2 -> 0 there (verified: det H >= 0 then implies
   tr H >= 0 automatically, so testing both uniformly is equivalent)."""
-  theta1, theta2, *_ = _prop1_2x2(a, b, alpha)
+  theta1, theta2, *_ = _prop1_2x2(a, f, beta)
   tr_h = 2.0 + 2.0 * eta * (theta1 + theta2)
   det_h = (1.0 + 2.0 * eta * theta1) * (1.0 + 2.0 * eta * theta2)
   return tr_h >= -tol and det_h >= -tol
 
 
-def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha: float, tol: float = _TOL):
+def _support_candidates(a: np.ndarray, f: np.ndarray, S: tuple[int, ...], beta: float, tol: float = _TOL):
   """Every stationary candidate on support S per Theorem "Bounded candidate
-  count": the uniform anchor if alpha == alpha_0(S), else the points built
+  count": the uniform anchor if beta == beta_0(S), else the points built
   from the secular equation and the live-pole formulas (that theorem's
   proof, Case 2). Returns a list of (w_full_Kvec, eta) pairs -- not yet
   filtered for feasibility or exact-support-S (the caller does that, since
@@ -137,7 +136,7 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
   K = len(a)
   idx = np.array(S)
   n = len(idx)
-  a_S, b_S = a[idx], b[idx]
+  a_S, f_S = a[idx], f[idx]
   u0_S = np.full(n, 1.0 / n)
 
   def embed(w_S: np.ndarray) -> np.ndarray:
@@ -145,29 +144,29 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
     w[idx] = w_S
     return w
 
-  mu_a, mu_b = float(a_S.mean()), float(b_S.mean())
+  mu_a, mu_f = float(a_S.mean()), float(f_S.mean())
   va = float(np.mean((a_S - mu_a) ** 2))
-  vb = float(np.mean((b_S - mu_b) ** 2))
-  alpha0_S = va / (va + vb) if (va + vb) > 0 else 0.5
+  vf = float(np.mean((f_S - mu_f) ** 2))
+  beta0_S = va / (va + vf) if (va + vf) > 0 else 0.5
 
-  if abs(alpha - alpha0_S) < tol:
+  if abs(beta - beta0_S) < tol:
     return [(embed(u0_S), 0.0)]
 
-  # --- Case 2-4 setup: alpha != alpha_0(S) ---
-  theta1, theta2, rho, ta, tb, na, nb = _prop1_2x2(a_S, b_S, alpha)
-  if na < tol or nb < tol:
+  # --- Case 2-4 setup: beta != beta_0(S) ---
+  theta1, theta2, rho, ta, tf, na, nf = _prop1_2x2(a_S, f_S, beta)
+  if na < tol or nf < tol:
     return []  # degenerate support (shouldn't occur for an admissible S)
 
   degenerate_rho = abs(1.0 - rho ** 2) < tol  # |rho| = 1: span is 1-D
-  e1 = tb / nb
+  e1 = tf / nf
   if not degenerate_rho:
     e2 = (ta - rho * na * e1) / (na * np.sqrt(max(1.0 - rho ** 2, 0.0)))
   else:
     e2 = None
 
-  p = alpha * nb ** 2 - (1 - alpha) * rho ** 2 * na ** 2
-  q = -(1 - alpha) * rho * np.sqrt(max(1.0 - rho ** 2, 0.0)) * na ** 2
-  s = -(1 - alpha) * (1 - rho ** 2) * na ** 2
+  p = beta * nf ** 2 - (1 - beta) * rho ** 2 * na ** 2
+  q = -(1 - beta) * rho * np.sqrt(max(1.0 - rho ** 2, 0.0)) * na ** 2
+  s = -(1 - beta) * (1 - rho ** 2) * na ** 2
 
   def eigvec(theta_k: float) -> np.ndarray:
     if e2 is None:
@@ -186,12 +185,12 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
   else:
     v1, v2 = eigvec(theta1), eigvec(theta2)
 
-  d_S = (1 - alpha) * (a_S ** 2 - 2 * mu_a * a_S) - alpha * (b_S ** 2 - 2 * mu_b * b_S)
+  d_S = (1 - beta) * (a_S ** 2 - 2 * mu_a * a_S) - beta * (f_S ** 2 - 2 * mu_f * f_S)
   r1 = float(v1 @ d_S)
   r2 = float(v2 @ d_S) if v2 is not None else 0.0
   d_S_centered = d_S - d_S.mean()
   r0_sq = max(float(d_S_centered @ d_S_centered) - r1 ** 2 - r2 ** 2, 0.0)
-  c_tilde = _g(u0_S, *_M_r(a_S, b_S, alpha))  # = g(u0, alpha) on S
+  c_tilde = _g(u0_S, *_M_r(a_S, f_S, beta))  # = g(u0, beta) on S
 
   def w_from_eta(eta: float) -> np.ndarray:
     """Explicit candidate formula (Theorem "Bounded candidate count"'s
@@ -224,7 +223,7 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
       denom = 1.0 + 2.0 * lam_k * theta_o
       if abs(denom) > _POLE_TOL:
         w_circ = w_circ + lam_k * (2.0 * lam_k * theta_o * r_o / denom) * v_o
-    g_circ = _g(w_circ, *_M_r(a_S, b_S, alpha))
+    g_circ = _g(w_circ, *_M_r(a_S, f_S, beta))
     val = -g_circ / theta_k
     if val >= -tol:
       uk = float(np.sqrt(max(val, 0.0)))
@@ -233,11 +232,11 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
     live_pole_etas.append(lam_k)
 
   # --- Generic case: secular equation (Theorem "Bounded candidate count"'s
-  # proof, degree-<=5 polynomial Phi_{S,alpha}) ---
+  # proof, degree-<=5 polynomial Phi_{S,beta}) ---
   # Clearing denominators into that polynomial is exact in principle, but
   # rescales the equation by det(H)^2, which spans dozens of orders of
   # magnitude whenever theta1 or theta2 is small -- routine near
-  # alpha_min/alpha_max, where the discriminant D -> 0. np.roots's
+  # beta_min/beta_max, where the discriminant D -> 0. np.roots's
   # companion-matrix eigensolve on such a badly-scaled polynomial can
   # return roots that are simply wrong (not just imprecise), which
   # polishing can't fix if the starting point itself is garbage --
@@ -322,16 +321,16 @@ def _support_candidates(a: np.ndarray, b: np.ndarray, S: tuple[int, ...], alpha:
   return candidates
 
 
-def _admissible(alpha: float, lo: float, hi: float, tol: float = _TOL) -> bool:
+def _admissible(beta: float, lo: float, hi: float, tol: float = _TOL) -> bool:
   """Theorem "Admissible supports": a support S can carry a feasible
-  weighting for target alpha only if alpha is between S's own smallest and
+  weighting for target beta only if beta is between S's own smallest and
   largest pairwise balance."""
-  if lo < alpha < hi:
+  if lo < beta < hi:
     return True
-  return abs(lo - hi) < tol and abs(alpha - lo) < tol  # all-equal-balance edge case
+  return abs(lo - hi) < tol and abs(beta - lo) < tol  # all-equal-balance edge case
 
 
-def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL) -> ExactWResult:
+def solve_w_exact(a: np.ndarray, f: np.ndarray, beta: float, tol: float = _TOL) -> ExactWResult:
   """Global optimum of (P) via support enumeration (Algorithm 1). Sound and
   complete: unconditionally returns a genuine global optimum, at the cost
   of visiting admissible supports largest-first (Theorem "Support size
@@ -339,36 +338,36 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
   fires or every admissible support of size > the best ESS found has been
   exhausted."""
   a = np.asarray(a, dtype=float)
-  b = np.asarray(b, dtype=float)
+  f = np.asarray(f, dtype=float)
   K = len(a)
   if K < 2:
     raise ValueError(f'need at least 2 systems, got {K}')
-  if not (0.0 <= alpha <= 1.0):
-    raise ValueError(f'alpha={alpha} outside [0,1]')
+  if not (0.0 <= beta <= 1.0):
+    raise ValueError(f'beta={beta} outside [0,1]')
 
-  pairs = pairwise_alphas(a, b)
-  alpha_min, alpha_max = alpha_min_max(a, b)
-  if not (alpha_min - tol <= alpha <= alpha_max + tol):
-    raise ValueError(f'alpha={alpha} outside reachable range [{alpha_min}, {alpha_max}] (Theorem "Reachable range")')
+  pairs = pairwise_betas(a, f)
+  beta_min, beta_max = beta_min_max(a, f)
+  if not (beta_min - tol <= beta <= beta_max + tol):
+    raise ValueError(f'beta={beta} outside reachable range [{beta_min}, {beta_max}] (Theorem "Reachable range")')
 
-  # Boundary shortcut: at alpha == alpha_min or alpha_max exactly, no
+  # Boundary shortcut: at beta == beta_min or beta_max exactly, no
   # support of size >= 3 can EVER be admissible -- a non-degenerate support
-  # of that size only reaches the OPEN interval (alpha_min(S), alpha_max(S)),
+  # of that size only reaches the OPEN interval (beta_min(S), beta_max(S)),
   # never its own endpoint, let alone the global one. The search below
   # would still visit (and correctly reject) every subset of every size
   # from K down to 3 to discover this, which is pure overhead: _admissible
   # rescans all pairs per subset, and there are exponentially many subsets
   # in the middle sizes. Skip straight to the answer when it's unambiguous:
-  # on the segment {w: w_i+w_j=1, w>=0} of a two-system support, alpha(w)
+  # on the segment {w: w_i+w_j=1, w>=0} of a two-system support, beta(w)
   # is CONSTANT and 1/2||w||^2 is minimized at the uniform split, so
   # w=(0.5,0.5) is the unique global optimum whenever a SINGLE pair attains
   # the extremal value. A tie among >= 2 pairs could in principle be beaten
   # by a larger all-equal-balance support (3+ systems with proportional
   # centered score vectors), so ties fall through to the general search,
   # which already handles that case correctly via largest-first order.
-  if alpha_max - alpha_min > tol:
-    for target in (alpha_min, alpha_max):
-      if abs(alpha - target) > tol:
+  if beta_max - beta_min > tol:
+    for target in (beta_min, beta_max):
+      if abs(beta - target) > tol:
         continue
       tied = [(i, j) for i, j, v in pairs if abs(v - target) <= tol]
       if len(tied) != 1:
@@ -376,13 +375,13 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
       i, j = tied[0]
       w = np.zeros(K)
       w[i] = w[j] = 0.5
-      which = 'alpha_min' if target == alpha_min else 'alpha_max'
+      which = 'beta_min' if target == beta_min else 'beta_max'
       return ExactWResult(
-          w=w, alpha_target=alpha, alpha_achieved=alpha_of(a, b, w),
+          w=w, beta_target=beta, beta_achieved=beta_of(a, f, w),
           success=True, certified=True, support=(i, j), phase='anchor',
           n_supports_visited=1, n_candidates_evaluated=1,
           objective=0.5 * float(np.sum(w ** 2)), ess=2.0,
-          message=f'boundary shortcut: alpha == {which}, attained uniquely by pair {(i, j)}',
+          message=f'boundary shortcut: beta == {which}, attained uniquely by pair {(i, j)}',
       )
 
   best = None  # (ess, w, support, eta, phase)
@@ -395,11 +394,11 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
     for S in itertools.combinations(range(K), size):
       lo_S = min((v for i, j, v in pairs if i in S and j in S), default=None)
       hi_S = max((v for i, j, v in pairs if i in S and j in S), default=None)
-      if lo_S is None or not _admissible(alpha, lo_S, hi_S, tol):
+      if lo_S is None or not _admissible(beta, lo_S, hi_S, tol):
         continue
       n_supports_visited += 1
 
-      for w, eta in _support_candidates(a, b, S, alpha, tol):
+      for w, eta in _support_candidates(a, f, S, beta, tol):
         n_candidates_evaluated += 1
         support_mask = np.zeros(K, dtype=bool)
         support_mask[list(S)] = True
@@ -414,13 +413,13 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
         if w_sum <= 0:
           continue
         w = w / w_sum
-        # g(w,alpha)'s ABSOLUTE residual isn't a meaningful feasibility
-        # test near the alpha_min/alpha_max boundary: g = total_variance *
-        # (alpha_achieved - alpha), and total_variance can be tiny there
+        # g(w,beta)'s ABSOLUTE residual isn't a meaningful feasibility
+        # test near the beta_min/beta_max boundary: g = total_variance *
+        # (beta_achieved - beta), and total_variance can be tiny there
         # (near-collinear support), so a small g-residual can still hide a
-        # large alpha error. Testing alpha_achieved directly is scale-
+        # large beta error. Testing beta_achieved directly is scale-
         # invariant and catches exactly that case.
-        if abs(alpha_of(a, b, w) - alpha) > 1e-6:
+        if abs(beta_of(a, f, w) - beta) > 1e-6:
           continue
         actual_support = tuple(i for i in range(K) if w[i] > tol)
         if actual_support != S:
@@ -432,15 +431,15 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
           best = (ess, w, S, eta, phase)
 
         # Theorem "Exit certificate" conditions (i) (checked above), (ii), (iii):
-        d_all = _d_all(w, a, b, alpha)
+        d_all = _d_all(w, a, f, beta)
         i0 = S[0]
         lam = -(w[i0] + eta * d_all[i0])
         outside = [i for i in range(K) if i not in S]
         cond2 = all(lam + eta * d_all[i] >= -tol for i in outside)
-        cond3 = _curvature_ok(a, b, alpha, eta, tol)
+        cond3 = _curvature_ok(a, f, beta, eta, tol)
         if cond2 and cond3:
           return ExactWResult(
-              w=w, alpha_target=alpha, alpha_achieved=alpha_of(a, b, w),
+              w=w, beta_target=beta, beta_achieved=beta_of(a, f, w),
               success=True, certified=True, support=S, phase=phase,
               n_supports_visited=n_supports_visited, n_candidates_evaluated=n_candidates_evaluated,
               objective=0.5 * float(np.sum(w ** 2)), ess=ess,
@@ -449,11 +448,11 @@ def solve_w_exact(a: np.ndarray, b: np.ndarray, alpha: float, tol: float = _TOL)
 
   if best is None:
     raise RuntimeError(
-        f'solve_w_exact found no feasible candidate for alpha={alpha} -- should be unreachable '
-        f'for an in-range alpha (Theorem "Reachable range"); likely a bug in _support_candidates.')
+        f'solve_w_exact found no feasible candidate for beta={beta} -- should be unreachable '
+        f'for an in-range beta (Theorem "Reachable range"); likely a bug in _support_candidates.')
   ess, w, S, eta, _ = best
   return ExactWResult(
-      w=w, alpha_target=alpha, alpha_achieved=alpha_of(a, b, w),
+      w=w, beta_target=beta, beta_achieved=beta_of(a, f, w),
       success=True, certified=False, support=S, phase='fallback',
       n_supports_visited=n_supports_visited, n_candidates_evaluated=n_candidates_evaluated,
       objective=0.5 * float(np.sum(w ** 2)), ess=ess,
