@@ -7,6 +7,8 @@ GK-robust Mahalanobis-distance ellipses.
 Usage: python -m mwb.scripts.plot_af_scatter_heen23_jazh24
 """
 
+from __future__ import annotations
+
 import os
 import sys
 
@@ -17,7 +19,6 @@ import numpy as np
 from matplotlib.patches import Ellipse
 
 from mwb.lib.consistency import real_systems
-from mwb.lib.outlier_detection import gk_robust_loc_cov
 from mwb.mqm_scoring import load_system_scores
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -47,11 +48,50 @@ Z_MAX = max(Z_LEVELS)
 _GK_CMAP = plt.get_cmap('Greens')
 _GK_COLORS = [_GK_CMAP(z / Z_MAX) for z in Z_LEVELS]
 
+# Iglewicz & Hoya's (1993) own recommended normalizing constant (0.6745 =
+# the standard normal distribution's 0.75 quantile, so a MAD-based scale
+# estimate is on roughly the same footing as an ordinary std for
+# approximately-normal data) -- used by gk_robust_loc_cov below to turn
+# each marginal MAD into a variance estimate.
+_MZ_CONSTANT = 0.6745
+
+
+def gk_robust_loc_cov(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+  """Robust bivariate location (median vector) and covariance for the JOINT
+  (x,y) random vector, via the Gnanadesikan-Kettenring (GK) estimator: the
+  direct multivariate generalization of median/MAD, unlike a Minimum
+  Covariance Determinant fit needing no subset search over C(n, h)
+  candidate supports, so it stays well-defined and deterministic down to
+  small K.
+
+  The off-diagonal entry comes from the classic MAD-based identity
+  Var(X+Y) - Var(X-Y) = 4 Cov(X,Y), with each MAD standardized by
+  _MZ_CONSTANT to be a consistent robust std estimate; the resulting
+  correlation is bounded in [-1,1] by construction (the two MADs it's
+  built from are both >=0), so the covariance matrix is always valid.
+  Returns None if either marginal MAD is 0 (a constant sample -- no
+  meaningful scale)."""
+  medx, medy = np.median(x), np.median(y)
+  madx = np.median(np.abs(x - medx))
+  mady = np.median(np.abs(y - medy))
+  if madx == 0 or mady == 0:
+    return None
+  u, v = (x - medx) / madx, (y - medy) / mady
+  s, d = u + v, u - v
+  mad_s = np.median(np.abs(s - np.median(s)))
+  mad_d = np.median(np.abs(d - np.median(d)))
+  denom = mad_s ** 2 + mad_d ** 2
+  rho = (mad_s ** 2 - mad_d ** 2) / denom if denom > 0 else 0.0
+  rho = np.clip(rho, -0.999, 0.999)
+  sx, sy = madx / _MZ_CONSTANT, mady / _MZ_CONSTANT
+  cov = np.array([[sx ** 2, rho * sx * sy], [rho * sx * sy, sy ** 2]])
+  return np.array([medx, medy]), cov
+
 
 def add_gk_ellipses(ax, f, a, alpha=1.0, linewidth=1.6):
   """Unfilled ellipses at each Z in Z_LEVELS: the boundary where the joint
   (a,f) Mahalanobis distance from the GK-ROBUST location, under the
-  GK-ROBUST covariance (mwb.lib.outlier_detection.gk_robust_loc_cov), equals
+  GK-ROBUST covariance (gk_robust_loc_cov above), equals
   Z. Returns the legend handles, or [] if the GK fit is degenerate."""
   out = gk_robust_loc_cov(f, a)
   if out is None:
