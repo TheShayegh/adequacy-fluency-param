@@ -398,20 +398,6 @@ def save_synth25_preference(
   )
 
 
-def load_synth25_preference(path: str) -> dict:
-  npz = np.load(path)
-  out = {
-      'dataset': str(npz['dataset']), 'metametric': str(npz['metametric']),
-      'synthesis': str(npz['synthesis']),
-      'dial_preset': str(npz['dial_preset']) if 'dial_preset' in npz else 'linear',
-      'n_base_scorers': int(npz['n_base_scorers']),
-  }
-  for label in ('A', 'F', 'AF', 'T'):
-    if label in npz:
-      out[label] = float(npz[label])
-  return out
-
-
 def pools_tag(dataset: str, metametric_name: str, synthesis: str = 'offset', dial_preset: str = 'linear') -> str:
   """Filename tag for the all-pools cache (compute_synth25_preference.py
   --all-pools writer, plot_scorer_preference_vs_beta.py's
@@ -479,55 +465,6 @@ def load_synth25_pools(path: str) -> dict:
 # synthesis's own T -- see plot_scorer_preference_vs_beta.py's
 # --overlay-synth25 and compute_scorer_preference_vs_beta.py's
 # --family-set Jneg, which this is the synth25-baseline counterpart of.
-
-def base_scorer_synth25_preference_J(
-    dataset: str,
-    base_scorer_name: str,
-    systems: list[str],
-    root: str = '.',
-    metametric_name: str = 'spa_synth25',
-    dial_grid=NEG_J_DIAL_GRID,
-    tie_seed: int = DEFAULT_TIE_SEED,
-    num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
-    seed: int = DEFAULT_SEED,
-    adjacent_only: bool = PREFERENCE_ADJACENT_ONLY_DEFAULT,
-) -> float | None:
-  """preference_score of the J family (base_scorer_family_joint) scored against
-  `metametric_name` -- same coverage gate and mask as base_scorer_synth25_
-  preference, but a single number (not a dict), since there is only one
-  family here. None on insufficient coverage."""
-  if metametric_name not in SYNTH25_METAMETRICS:
-    raise ValueError(f'metametric_name must be one of {SYNTH25_METAMETRICS}, got {metametric_name!r}')
-
-  pos = positional_af_matrices(dataset, systems, root=root)
-  if pos is None:
-    return None
-  a_pos, f_pos = pos
-  human_seg = load_human_seg_scores(dataset, systems, root=root)
-  if human_seg is None or human_seg.shape[1] != a_pos.shape[1]:
-    return None
-  if base_scorer_name in ASPECT_BASE_SCORERS:
-    base_scorer_seg = _aspect_base_scorer_seg(base_scorer_name, a_pos, f_pos, human_seg)
-  else:
-    base_scorer_seg = load_scorer_seg_scores(dataset, base_scorer_name, systems, root=root)
-  if base_scorer_seg is None or base_scorer_seg.shape[1] != a_pos.shape[1]:
-    return None
-
-  mask = ~(np.isnan(a_pos).any(axis=0) | np.isnan(f_pos).any(axis=0)
-           | np.isnan(base_scorer_seg).any(axis=0) | np.isnan(human_seg).any(axis=0))
-  if mask.sum() < _MIN_SPA_SEGMENTS:
-    return None
-  a_pos, f_pos = a_pos[:, mask], f_pos[:, mask]
-  base_scorer_seg, human_seg = base_scorer_seg[:, mask], human_seg[:, mask]
-
-  family = base_scorer_family_joint(base_scorer_seg, a_pos, f_pos, dial_grid)
-  vals = np.array([
-      synth25_value(metametric_name, human_seg, family[dial], a_pos, f_pos,
-                     tie_seed=tie_seed, num_permutations=num_permutations, seed=seed)
-      for dial in dial_grid
-  ])
-  return preference_score(vals, adjacent_only=adjacent_only)
-
 
 def base_scorer_synth25_preference_J_all_pools(
     dataset: str,

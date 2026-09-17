@@ -20,29 +20,3 @@ DATASET_DIRS = {
     'enes24': ('wmt24', 'en-es'),
     'jazh24': ('wmt24', 'ja-zh'),
 }
-
-
-def datasets_for_years(years) -> list[str]:
-  """Dataset names whose year dir is exactly one of `years` (e.g. [2022,
-  2023, 2024] or ['22','23','24'] or ['wmt22',...] all work) -- matches on
-  the year dir's 'wmtNN' prefix, so 'wmt21.news'/'wmt21.tedtalks' both count
-  as year 2021 (there's no bare 'wmt21' dataset)."""
-  wanted = set()
-  for y in years:
-    y = str(y)
-    if y.startswith('wmt'):
-      wanted.add(y)
-    else:
-      wanted.add(f'wmt{y[-2:]}')
-  return [
-      name for name, (year_dir, _pair) in DATASET_DIRS.items()
-      if year_dir.split('.')[0] in wanted
-  ]
-
-
-def datasets_for_pair(pair: str) -> list[str]:
-  """Dataset names whose language-pair dir is exactly `pair` (e.g.
-  'en-de'), across all years/domains -- e.g. for 'en-de' this includes
-  ted_ende (the TED-talks domain, not just the news-task sets), since it's
-  still the same source/target language pair."""
-  return [name for name, (_year_dir, p) in DATASET_DIRS.items() if p == pair]

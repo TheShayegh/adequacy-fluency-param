@@ -196,35 +196,3 @@ def build_beta_grid(
       dropped.append(name)
   betas = np.unique(np.concatenate([base, extra])) if extra else base
   return betas, dropped
-
-
-def compute_beta_ij_grid(
-    a_pool: np.ndarray, f_pool: np.ndarray, subsets: list[tuple[int, ...]], eps_frac: float = 1e-3,
-    trim_frac: float = 0.0,
-) -> tuple[list[float], float, float]:
-  """The shared beta grid: every pairwise beta_ij of the FULL pool
-  (a_pool, f_pool), restricted to the range every one of `subsets` can
-  jointly reach (their own reachable ranges, intersected -- same eps-inset
-  convention as build_beta_grid, so the exact boundary itself -- where
-  only a single degenerate 2-system support is admissible -- is excluded).
-  A subset's own pairwise betas are always a SUBSET of the full pool's
-  C(K,2) (any pair inside a sampled subset is also a pair of the full
-  pool), so this is well-defined and, by construction, every returned beta
-  is within every sampled subset's own reachable range too.
-
-  trim_frac additionally shrinks the common range by trim_frac on EACH
-  side (e.g. 1/6 leaves the middle 2/3) before the eps-inset and filter --
-  a cheaper preview knob, independent of eps_frac's boundary-degeneracy
-  exclusion."""
-  los, his = [], []
-  for s in subsets:
-    lo, hi = beta_min_max(a_pool[list(s)], f_pool[list(s)])
-    los.append(lo)
-    his.append(hi)
-  lo_common, hi_common = max(los), min(his)
-  span = hi_common - lo_common
-  lo_trim, hi_trim = lo_common + trim_frac * span, hi_common - trim_frac * span
-  eps = (hi_trim - lo_trim) * eps_frac
-  beta_ijs = sorted(set(v for _, _, v in pairwise_betas(a_pool, f_pool)))
-  grid = [v for v in beta_ijs if lo_trim + eps <= v <= hi_trim - eps]
-  return grid, lo_trim, hi_trim
