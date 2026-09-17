@@ -13,16 +13,16 @@ translation systems happen to be in the evaluation pool. This project:
 1. Exposes that balance as an explicit parameter, β, and provides an exact
    algorithm that reweights the systems in a meta-evaluation to hit any
    target β while staying as close to uniform weighting as possible
-   (`mwb/lib/reweight_exact.py`).
+   (`src/lib/reweight_exact.py`).
 2. Introduces a scorer-augmentation framework — controlled synthetic scorer
    families with a known relative identity — to validate a meta-evaluation's
-   internal consistency (`mwb/lib/synthetic_scorers.py` and friends).
+   internal consistency (`src/lib/synthetic_scorers.py` and friends).
 3. Applies both to compare the paper's reweighting method against prior
    system-synthesis approaches, and to sweep popular scorers (MetricX,
    xCOMET, ...) across the reachable β range.
 
 **Naming note:** the code calls the paper's β `beta` throughout
-(`mwb/lib/beta.py`), matching the paper directly. The paper's `a`/`f`
+(`src/lib/beta.py`), matching the paper directly. The paper's `a`/`f`
 (adequacy/fluency) are likewise `a`/`f` in code. A separate, unrelated
 quantity — the paper's footnote reparameterization β_std — lives in the
 same module as `beta_to_beta_std`/`beta_std_to_beta`; it does not appear in
@@ -52,7 +52,7 @@ Everything a run produces (figures, tables, `.npz` caches) is written under
 ## Reproducing the paper
 
 Every figure and table maps to one `cli.py` command. Each also runs
-standalone as `python -m mwb.scripts.<name>` with its own, more detailed
+standalone as `python -m src.scripts.<name>` with its own, more detailed
 `--help`.
 
 | Paper artifact | Command |
@@ -79,7 +79,7 @@ to rerun repeatedly while iterating on figure styling.
 
 ## Data notes
 
-Worth knowing before touching `mwb/mqm_scoring.py` or the data under
+Worth knowing before touching `src/lib/mqm_scoring.py` or the data under
 `external/`:
 
 - **Two scoring paths.** For most datasets, official per-error rating files
@@ -88,7 +88,7 @@ Worth knowing before touching `mwb/mqm_scoring.py` or the data under
   fall back to re-deriving scores from the raw MQM TSVs (`parse_mqm_tsv` +
   `error_weight`), because that path was found to match the official totals
   *better* than the official rating files for those specific sets. See
-  `mwb/mqm_scoring.py`'s module docstring for the full weighting table and
+  `src/lib/mqm_scoring.py`'s module docstring for the full weighting table and
   the three confirmed overrides.
 - **Segment indexing gotcha.** `doc_id`/`seg_id` are 1-indexed in every
   dataset except `generalMT2022/enru`, which is 0-indexed. This doesn't
@@ -113,13 +113,13 @@ Worth knowing before touching `mwb/mqm_scoring.py` or the data under
 - **`ende23` is excluded project-wide** (not just from the paper's headline
   datasets): far more of its MQM annotations fall into the catch-all
   "Other" category than any other dataset, so its adequacy/fluency split is
-  less trustworthy (see `mwb/lib/consistency.py`'s `MANUALLY_EXCLUDED_DATASETS`).
+  less trustworthy (see `src/lib/consistency.py`'s `MANUALLY_EXCLUDED_DATASETS`).
 
 ## Scorer-augmentation families
 
 The paper's three synthetic-scorer families (Sec. "Scorer Augmentation")
 are specific cases of a more general dial-based construction in
-`mwb/lib/synthetic_scorers.py`:
+`src/lib/synthetic_scorers.py`:
 
 | Paper family | Implementation |
 |---|---|
@@ -138,7 +138,7 @@ pipeline, since the paper reports no figure or table for them.
 
 Every family shares a `dial=0` anchor (the real base scorer, unchanged);
 larger `|dial|` moves further toward (or past) the family's target
-endpoint. `mwb/lib/synthetic_scorer_preference.py`'s `preference_score`
+endpoint. `src/lib/synthetic_scorer_preference.py`'s `preference_score`
 is the shared reduction — the fraction of same-family dial pairs where a
 given meta-metric prefers the more extreme dial — that all three of the
 paper's family-specific measures (adequacy-over-fluency preference, MQM
@@ -146,8 +146,8 @@ adherence, explainability by MQM) reduce to.
 
 ## Solver validation
 
-`mwb/lib/reweight_exact.py`'s solver is validated against
-`mwb/lib/reweight_exhaustive.py`, a brute-force grid search with no
+`src/lib/reweight_exact.py`'s solver is validated against
+`src/lib/reweight_exhaustive.py`, a brute-force grid search with no
 algorithmic structure to get wrong — a trust anchor, not a production
 solver.
 
@@ -177,5 +177,3 @@ exists, prefer that citation instead.
       url={https://arxiv.org/abs/2609.14795}, 
 }
 ```
-
-<a href="https://TheShayegh.github.io/"><img src="https://TheShayegh.github.io/img/favicon.png" style="background-color:red;"/></a>

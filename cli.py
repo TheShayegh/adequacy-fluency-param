@@ -1,10 +1,10 @@
 """Single entry point mapping every paper figure/table to a command.
 
-Each subcommand forwards straight to the matching mwb/scripts/*.py module
-(run as `python -m mwb.scripts.<name>`, so its own imports resolve with no
+Each subcommand forwards straight to the matching src/scripts/*.py module
+(run as `python -m src.scripts.<name>`, so its own imports resolve with no
 path hacks) -- this file adds no computation of its own, only discoverability
 and a stable name per paper artifact. Every script also still runs standalone
-(`python -m mwb.scripts.compute_dataset_stats --help`) with its own, more
+(`python -m src.scripts.compute_dataset_stats --help`) with its own, more
 detailed --help; use that for the full flag reference.
 
 Usage: python cli.py <command> [-- SCRIPT_ARGS...]
@@ -107,7 +107,7 @@ def main(argv=None) -> int:
   script_args = args.script_args
   if script_args and script_args[0] == '--':
     script_args = script_args[1:]
-  cmd = [sys.executable, '-m', f'mwb.scripts.{module}', *script_args]
+  cmd = [sys.executable, '-m', f'src.scripts.{module}', *script_args]
   return subprocess.run(cmd).returncode
 
 

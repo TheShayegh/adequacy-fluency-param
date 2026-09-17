@@ -47,7 +47,7 @@ git submodule update --init --recursive
 #    then re-run this script (it skips the download when the extracted
 #    directory already exists and is non-empty, so a partial manual
 #    transfer of just the needed year/pair subtrees also works --
-#    mwb/lib/dataset_dirs.py's DATASET_DIRS lists which (year, pair)
+#    src/lib/wmt_metadata.py's DATASET_DIRS lists which (year, pair)
 #    subtrees the datasets this project covers actually need).
 # ---------------------------------------------------------------------
 mkdir -p external/mt-metrics-eval-data
@@ -63,7 +63,7 @@ else
 fi
 
 # generalMT2023 ende/zhen ship as tar.gz'd TSVs with a ".3ratingsPerSegment"
-# infix in their filename that mwb/mqm_scoring.py's SETS dict does NOT
+# infix in their filename that src/lib/mqm_scoring.py's SETS dict does NOT
 # expect in the final path -- extract, then rename to strip that infix.
 # Every other dataset's MQM tsv is already a plain file, no extraction
 # needed.

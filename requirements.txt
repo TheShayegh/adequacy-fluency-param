@@ -1,7 +1,7 @@
-# Traced by walking the actual import graph of mwb/ (lib + scripts) --
+# Traced by walking the actual import graph of src/ (lib + scripts) --
 # not a full environment freeze. torch is needed transitively (used as a
-# fast CPU batched-tensor-op engine by mwb/lib/reweight_exhaustive.py and
-# mwb/lib/beta_ess_preference_grid.py's simplex sampler, not for GPU/ML
+# fast CPU batched-tensor-op engine by src/lib/reweight_exhaustive.py and
+# src/lib/beta_ess_preference_grid.py's simplex sampler, not for GPU/ML
 # work) and is a large install; everything else is lightweight.
 numpy==2.0.2
 pandas==2.3.3

@@ -1,4 +1,4 @@
-"""Regression tests for mwb.lib.reweight_exact.solve_w_exact.
+"""Regression tests for src.lib.reweight_exact.solve_w_exact.
 
 Run: python -m unittest tests.test_reweight_exact
 """
@@ -7,8 +7,8 @@ import unittest
 
 import numpy as np
 
-from mwb.lib.beta import beta as beta_of
-from mwb.lib.reweight_exact import solve_w_exact
+from src.lib.beta import beta as beta_of
+from src.lib.reweight_exact import solve_w_exact
 
 
 class TestAdversarialInstance(unittest.TestCase):
