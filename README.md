@@ -3,8 +3,8 @@
 > This repository's code was refactored and reorganized with the help of
 > [Claude](https://claude.com/claude-code) (Anthropic).
 
-Code for the WMT2026 paper **"Mind Which Bird You Favour: Parameterizing
-Adequacy–Fluency Balance in Meta-Evaluation of Machine Translation."**
+Code for the WMT2026 paper **["Mind Which Bird You Favour: Parameterizing
+Adequacy–Fluency Balance in Meta-Evaluation of Machine Translation."](https://arxiv.org/abs/2609.14795)**
 
 Machine translation meta-evaluation (evaluating automatic MT scorers against
 human judgment) inherits a hidden adequacy–fluency balance from whichever
