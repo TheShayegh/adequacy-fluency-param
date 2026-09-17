@@ -71,8 +71,8 @@ ARTIFACTS_DIR = os.path.join(ROOT, 'output')
 
 # (panel letter, dataset, cache path)
 PANELS = [
-    ('a', 'ende24', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_beta_ende24_n21.npz')),
-    ('b', 'zhen23', os.path.join(ARTIFACTS_DIR, 'data', 'loo_tau_vs_beta_zhen23_n21.npz')),
+    ('a', 'ende24', os.path.join(ARTIFACTS_DIR, 'loo_tau_vs_beta_ende24_n21.npz')),
+    ('b', 'zhen23', os.path.join(ARTIFACTS_DIR, 'loo_tau_vs_beta_zhen23_n21.npz')),
 ]
 
 # --- Figure geometry ---
