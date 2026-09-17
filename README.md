@@ -1,5 +1,8 @@
 # Mind Which Bird You Favour
 
+> This repository's code was refactored and reorganized with the help of
+> [Claude](https://claude.com/claude-code) (Anthropic).
+
 Code for the WMT2026 paper **"Mind Which Bird You Favour: Parameterizing
 Adequacy–Fluency Balance in Meta-Evaluation of Machine Translation."**
 
@@ -156,3 +159,23 @@ small residual gap there can correspond to a much easier point with
 inflated ESS. A fair comparison re-solves the exact solver at the
 exhaustive result's *actual achieved* β, not the nominal target, before
 comparing.
+
+## Citation
+
+The paper has been accepted to WMT2026, but the proceedings aren't published
+yet — this cites the arXiv preprint for now; once the ACL Anthology entry
+exists, prefer that citation instead.
+
+```bibtex
+@misc{shayegh2026mindbirdfavourparameterizing,
+      title={Mind Which Bird You Favour: Parameterizing Adequacy-Fluency Balance in Meta-Evaluation of Machine Translation}, 
+      author={Behzad Shayegh and Niloofar Kazemi},
+      year={2026},
+      eprint={2609.14795},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2609.14795}, 
+}
+```
+
+<a href="https://TheShayegh.github.io/"><img src="https://TheShayegh.github.io/img/favicon.png" style="background-color:red;"/></a>
