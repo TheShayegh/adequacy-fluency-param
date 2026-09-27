@@ -2,6 +2,11 @@
 
 This guide accompanies the WMT2026 paper [*Mind Which Bird You Favour: Parameterizing Adequacy-Fluency Balance in Meta-Evaluation of Machine Translation*](https://arxiv.org/abs/2609.14795). It explains how to use the tool to specify the preferred balance between adequacy and fluency in a machine translation meta-evaluation.
 
+**Contents**
+
+* TOC
+{:toc}
+
 ## Why you need to choose a β
 
 Meta-evaluation ranks MT scorers (metrics) by how well they rank a set of translation systems. This ranking is based on two types of errors: **adequacy** errors (incorrect meaning) and **fluency** errors (unnatural or ungrammatical text). The final ranking is driven by whichever error type varies more across the systems in the pool. Consequently, the winning metric's adequacy-fluency balance is dictated by the specific systems annotated. This balance is arbitrary and fluctuates significantly. When selecting a metric for your own use, this balance is crucial:
@@ -31,8 +36,9 @@ the dataset you are using, against your own preference.
 ## Find your β
 
 There are two common situations. Pick the one that fits you.
-- Scenario 1: Push as far towards adequacy (or fluency) as is reliable
-- Scenario 2: You have a specific balance in mind
+
+- [Scenario 1: Push as far towards adequacy (or fluency) as is reliable](#scenario-1-push-as-far-towards-adequacy-or-fluency-as-is-reliable)
+- [Scenario 2: You have a specific balance in mind](#scenario-2-you-have-a-specific-balance-in-mind)
 
 ---
 
