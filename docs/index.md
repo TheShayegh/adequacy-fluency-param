@@ -231,3 +231,7 @@ Some practical notes:
 - **Retune for every dataset.** Because of the reasons in the section on why
   there is no recommended β, a β tuned on one dataset does not carry over to
   another. What carries over is your crafted pairs, so keep them.
+
+---
+
+*Our thanks to [David Vilar](https://scholar.google.com/citations?user=2cP6vV4AAAAJ&hl=en) for encouraging us to prepare this practical guide.*
