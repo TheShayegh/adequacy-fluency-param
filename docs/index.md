@@ -1,6 +1,6 @@
 # A Practitioner's Guide to Choosing β
 
-This guide accompanies the WMT2026 paper [*Mind Which Bird You Favour*](https://arxiv.org/abs/2609.14795). It explains how to use the tool to specify the preferred balance between adequacy and fluency in a meta-evaluation.
+This guide accompanies the WMT2026 paper [*Mind Which Bird You Favour: Parameterizing Adequacy-Fluency Balance in Meta-Evaluation of Machine Translation*](https://arxiv.org/abs/2609.14795). It explains how to use the tool to specify the preferred balance between adequacy and fluency in a machine translation meta-evaluation.
 
 ## Why you need to choose a β
 

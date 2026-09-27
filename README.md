@@ -21,12 +21,9 @@ translation systems happen to be in the evaluation pool. This project:
    system-synthesis approaches, and to sweep popular scorers (MetricX,
    xCOMET, ...) across the reachable β range.
 
-**Naming note:** the code calls the paper's β `beta` throughout
-(`src/lib/beta.py`), matching the paper directly. The paper's `a`/`f`
-(adequacy/fluency) are likewise `a`/`f` in code. A separate, unrelated
-quantity — the paper's footnote reparameterization β_std — lives in the
-same module as `beta_to_beta_std`/`beta_std_to_beta`; it does not appear in
-any paper table.
+**Using this in practice?** See the
+[Practitioner's Guide to Choosing β](https://theshayegh.github.io/adequacy-fluency-param/)
+for how to pick a β for your use case, with runnable code.
 
 ## Setup
 
@@ -99,9 +96,7 @@ Worth knowing before touching `src/lib/mqm_scoring.py` or the data under
   dataset — hierarchical (`Accuracy/Mistranslation`), flat
   (`do_not_translate`), and a mixed variant unique to `generalMT2022/enzh`
   (underscores before the slash). `classify_aspect` normalizes underscores
-  to spaces universally to handle all three; an earlier version that only
-  normalized in the flat-taxonomy branch silently dropped ~640 rows of
-  `enzh22` to "unclassified."
+  to spaces universally to handle all three.
 - **Disjoint reference sub-samples.** A few datasets contain extra
   reference/human systems rated on a segment sub-sample that barely
   overlaps the main pool (e.g. `newstest2021/en-de`'s `ref.C`/`ref.D`).
